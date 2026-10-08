@@ -1,10 +1,10 @@
 #!/bin/sh
 # =============================================================================
 #  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
-#  Версия 3.11.0-beta (финальная, с поддержкой IPv6)
+#  Версия 3.12.0-beta (расширенное автообучение: TCP 80/443 + UDP/QUIC 443)
 # =============================================================================
 
-echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.11.0-beta ==="
+echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.12.0-beta ==="
 
 # -----------------------------------------------------------------------------
 # 1. Создание основного скрипта ipset_update.sh
@@ -270,17 +270,18 @@ update_ipset6() {
 restore_learned() {
     [ -f "$LEARNED_CACHE" ] || return 0
     local count=0
+    # sort -u — дедуп без зависимости от coreutils (BusyBox sort -u есть)
     while read ip; do
         [ -z "$ip" ] && continue
         ipset add "$IPSET_NAME" "$ip" -exist 2>/dev/null && count=$((count+1))
-    done < "$LEARNED_CACHE"
+    done < "$(sort -u "$LEARNED_CACHE")"
     log "Восстановлено выученных IP: $count"
 }
 
 # -----------------------------------------------------------------------------
 # Главный блок
 # -----------------------------------------------------------------------------
-log "=== СТАРТ v3.11.0-beta ==="
+log "=== СТАРТ v3.12.0-beta ==="
 if wait_for_network; then
     setup_policy_routing
     setup_iptables
@@ -378,6 +379,34 @@ ANALYZE_INTERVAL=60
 LAST_ANALYZE=0
 LEARNED_CACHE="/etc/storage/learned_ips.cache"
 
+# --- Фаза 4: расширенное автообучение (TCP 80/443 + UDP/QUIC 443) ---
+LEARN_PORTS="80,443"     # TCP-порты обучения (80 = http→https редиректы/qname)
+LEARN_UDP_PORT="443"     # UDP 443 = QUIC (Telegram-медиа, YouTube-стриминг)
+LEARN_LIMIT="30/min"     # темп LOG — слабый CPU + малый dmesg-ring
+LEARN_BURST="60"
+LOG_PREFIX="PWB_LEARN"   # свой префикс — парсим ТОЛЬКО свои строки
+LEARNED_MAX=2000         # максимум записей кэша обучения (обрезаем хвост)
+
+modprobe ipt_LOG 2>/dev/null
+modprobe xt_LOG 2>/dev/null
+
+# Явные LOG-правила вместо неявных DPT=443-строк:
+# кандидаты = DST вне bypass_nets (ещё не маршрутизируются), TCP 80/443 + UDP 443.
+# -j LOG не терминирующий — пакет идёт дальше, маршрутизация не ломается.
+iptables -t mangle -C PREROUTING -m set ! --match-set bypass_nets dst -p tcp \
+    -m multiport --dports "$LEARN_PORTS" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
+    -j LOG --log-prefix "$LOG_PREFIX " 2>/dev/null || \
+iptables -t mangle -A PREROUTING -m set ! --match-set bypass_nets dst -p tcp \
+    -m multiport --dports "$LEARN_PORTS" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
+    -j LOG --log-prefix "$LOG_PREFIX " 2>/dev/null
+
+iptables -t mangle -C PREROUTING -m set ! --match-set bypass_nets dst -p udp \
+    --dport "$LEARN_UDP_PORT" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
+    -j LOG --log-prefix "$LOG_PREFIX " 2>/dev/null || \
+iptables -t mangle -A PREROUTING -m set ! --match-set bypass_nets dst -p udp \
+    --dport "$LEARN_UDP_PORT" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
+    -j LOG --log-prefix "$LOG_PREFIX " 2>/dev/null
+
 while true; do
     if ip rule show | grep -q "not.*fwmark 0xca6c"; then
         ip rule del pref 5182 2>/dev/null
@@ -440,14 +469,20 @@ while true; do
     NOW=$(date +%s)
     if [ $(( NOW - LAST_ANALYZE )) -ge $ANALYZE_INTERVAL ]; then
         LAST_ANALYZE=$NOW
-        dmesg | grep -E "DPT=443.*SYN|SYN.*DPT=443" | tail -30 | while read line; do
-            DST_IP=$(echo "$line" | grep -oE 'DST=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | cut -d'=' -f2)
+        dmesg | grep "$LOG_PREFIX" | grep -oE 'DST=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | cut -d'=' -f2 | sort -u | while read DST_IP; do
             if [ -n "$DST_IP" ] && ! ipset test bypass_nets "$DST_IP" 2>/dev/null; then
                 ipset add bypass_nets "$DST_IP" -exist
                 echo "[$(date)] Watchdog: Автоматически добавлен IP $DST_IP" >> /tmp/route_watchdog.log
                 echo "$DST_IP" >> "$LEARNED_CACHE"
             fi
         done
+        # Обрезаем кэш обучения (хвост больше не нужен, TTL никто не ведёт)
+        if [ -f "$LEARNED_CACHE" ]; then
+            LINES=$(wc -l < "$LEARNED_CACHE" 2>/dev/null)
+            if [ -n "$LINES" ] && [ "$LINES" -gt "$LEARNED_MAX" ]; then
+                tail -n "$LEARNED_MAX" "$LEARNED_CACHE" > "$LEARNED_CACHE.tmp" 2>/dev/null && mv "$LEARNED_CACHE.tmp" "$LEARNED_CACHE"
+            fi
+        fi
         dmesg -c > /dev/null 2>&1
     fi
 
@@ -505,7 +540,7 @@ mtd_storage.sh save
 
 echo ""
 echo "=============================================="
-echo "Установка v3.11.0-beta завершена. Запускаю первый импорт..."
+echo "Установка v3.12.0-beta завершена. Запускаю первый импорт..."
 echo "=============================================="
 sh /etc/storage/ipset_update.sh
 

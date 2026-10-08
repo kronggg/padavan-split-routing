@@ -38,11 +38,16 @@ fi
 # Удаляем правила iptables (IPv4)
 iptables -t mangle -D PREROUTING -m set --match-set bypass_nets dst -j MARK --set-mark 0xca6c 2>/dev/null
 iptables -t mangle -D PREROUTING -m set --match-set bypass_nets dst -j CONNMARK --set-mark 0xca6c 2>/dev/null
+iptables -t mangle -D PREROUTING ! -i wg0 -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null
 iptables -t mangle -D PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null
 
 # Удаляем правила ip6tables (IPv6)
 ip6tables -t mangle -D PREROUTING -m set --match-set bypass_nets6 dst -j MARK --set-mark 0xca6c 2>/dev/null
 ip6tables -t mangle -D PREROUTING -m set --match-set bypass_nets6 dst -j CONNMARK --set-mark 0xca6c 2>/dev/null
+
+# Удаляем LOG-правила автообучения (Фаза 4)
+iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p tcp -m multiport --dports 80,443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
+iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p udp --dport 443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
 
 # Удаляем policy routing (IPv4 и IPv6)
 ip rule del pref 5182 2>/dev/null

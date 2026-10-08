@@ -130,6 +130,14 @@ else
     WARNINGS=$((WARNINGS+1))
 fi
 
+# --- Проверка LOG-правил автообучения (Фаза 4) ---
+if iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'PWB_LEARN'; then
+    echo "  [OK] LOG-правила автообучения (PWB_LEARN) присутствуют"
+else
+    echo "  [WARN] LOG-правила автообучения (PWB_LEARN) отсутствуют"
+    WARNINGS=$((WARNINGS+1))
+fi
+
 # -----------------------------------------------------------------------------
 # 5. Policy routing (IPv4 и IPv6)
 # -----------------------------------------------------------------------------
