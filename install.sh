@@ -294,11 +294,20 @@ update_ipset6() {
 restore_learned() {
     [ -f "$LEARNED_CACHE" ] || return 0
     local count=0
-    # sort -u — дедуп без зависимости от coreutils (BusyBox sort -u есть)
+    # sort -u — дедуп без зависимости от coreutils (BusyBox sort -u есть).
+    # ВАЖНО: нельзя `done < "$(sort ...)"` — это открывает ФАЙЛ с именем-выводом,
+    # а не подаёт вывод на stdin. Пишем дедуп во временный файл.
+    sort -u "$LEARNED_CACHE" > "$LEARNED_CACHE.dedup" 2>/dev/null
+    if [ ! -s "$LEARNED_CACHE.dedup" ]; then
+        rm -f "$LEARNED_CACHE.dedup" 2>/dev/null
+        log "Восстановлено выученных IP: 0"
+        return 0
+    fi
     while read ip; do
         [ -z "$ip" ] && continue
         ipset add "$IPSET_NAME" "$ip" -exist 2>/dev/null && count=$((count+1))
-    done < "$(sort -u "$LEARNED_CACHE")"
+    done < "$LEARNED_CACHE.dedup"
+    rm -f "$LEARNED_CACHE.dedup" 2>/dev/null
     log "Восстановлено выученных IP: $count"
 }
 
