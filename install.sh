@@ -414,22 +414,9 @@ LEARNED_MAX=2000         # максимум записей кэша обучен
 modprobe ipt_LOG 2>/dev/null
 modprobe xt_LOG 2>/dev/null
 
-# Явные LOG-правила вместо неявных DPT=443-строк:
-# кандидаты = DST вне bypass_nets (ещё не маршрутизируются), TCP 80/443 + UDP 443.
-# -j LOG не терминирующий — пакет идёт дальше, маршрутизация не ломается.
-iptables -t mangle -C PREROUTING -m set ! --match-set bypass_nets dst -p tcp \
-    -m multiport --dports "$LEARN_PORTS" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
-    -j LOG --log-prefix "$LOG_PREFIX " 2>/dev/null || \
-iptables -t mangle -A PREROUTING -m set ! --match-set bypass_nets dst -p tcp \
-    -m multiport --dports "$LEARN_PORTS" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
-    -j LOG --log-prefix "$LOG_PREFIX " 2>/dev/null
-
-iptables -t mangle -C PREROUTING -m set ! --match-set bypass_nets dst -p udp \
-    --dport "$LEARN_UDP_PORT" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
-    -j LOG --log-prefix "$LOG_PREFIX " 2>/dev/null || \
-iptables -t mangle -A PREROUTING -m set ! --match-set bypass_nets dst -p udp \
-    --dport "$LEARN_UDP_PORT" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
-    -j LOG --log-prefix "$LOG_PREFIX " 2>/dev/null
+# LOG-правила автообучения добавляются ИДЕМПОТЕНТНО ВНУТРИ цикла (см. ниже),
+# чтобы само-восстанавливаться после сбоев и не зависеть от порядка запуска
+# относительно создания ipset bypass_nets.
 
 while true; do
     if ip rule show | grep -q "not.*fwmark 0xca6c"; then
@@ -461,6 +448,36 @@ while true; do
     if ! iptables -t mangle -C PREROUTING ! -i wg0 -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
         iptables -t mangle -A PREROUTING ! -i wg0 -m connmark --mark 0xca6c -j CONNMARK --restore-mark
         echo "[$(date)] Watchdog: добавлено правило CONNMARK restore" >> /tmp/route_watchdog.log
+    fi
+
+    # --- LOG-правила автообучения: идемпотентно, само-восстанавливаются ---
+    # -j LOG не терминирующий → маршрутизация не ломается.
+    if ! iptables -t mangle -C PREROUTING -m set ! --match-set bypass_nets dst -p tcp \
+        -m multiport --dports "$LEARN_PORTS" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
+        -j LOG --log-prefix "$LOG_PREFIX " 2>/dev/null; then
+        if iptables -t mangle -A PREROUTING -m set ! --match-set bypass_nets dst -p tcp \
+            -m multiport --dports "$LEARN_PORTS" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
+            -j LOG --log-prefix "$LOG_PREFIX " 2>>/tmp/route_watchdog.log; then
+            echo "[$(date)] Watchdog: добавлено LOG-правило TCP $LEARN_PORTS" >> /tmp/route_watchdog.log
+        else
+            echo "[$(date)] Watchdog: multiport недоступен — fallback LOG TCP по одному порту" >> /tmp/route_watchdog.log
+            for _p in 80 443; do
+                if ! iptables -t mangle -C PREROUTING -m set ! --match-set bypass_nets dst -p tcp \
+                    --dport "$_p" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
+                    -j LOG --log-prefix "$LOG_PREFIX " 2>/dev/null; then
+                    iptables -t mangle -A PREROUTING -m set ! --match-set bypass_nets dst -p tcp \
+                        --dport "$_p" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
+                        -j LOG --log-prefix "$LOG_PREFIX " 2>>/tmp/route_watchdog.log
+                fi
+            done
+        fi
+    fi
+    if ! iptables -t mangle -C PREROUTING -m set ! --match-set bypass_nets dst -p udp \
+        --dport "$LEARN_UDP_PORT" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
+        -j LOG --log-prefix "$LOG_PREFIX " 2>/dev/null; then
+        iptables -t mangle -A PREROUTING -m set ! --match-set bypass_nets dst -p udp \
+            --dport "$LEARN_UDP_PORT" -m limit --limit "$LEARN_LIMIT" --limit-burst "$LEARN_BURST" \
+            -j LOG --log-prefix "$LOG_PREFIX " 2>>/tmp/route_watchdog.log
     fi
 
     # Создание ipset6, если его ещё нет
@@ -599,6 +616,14 @@ echo ""
 echo "=============================================="
 echo "Установка v3.12.0-beta завершена. Запускаю первый импорт..."
 echo "=============================================="
+
+# Устраняем возможный СТАРЫЙ инстанс watchdog/ipset_update.
+# При переустановке поверх старой версии старый watchdog держал lock
+# → новый инстанс выходил молча, и его правки не применялись.
+killall route_watchdog.sh 2>/dev/null
+killall ipset_update.sh 2>/dev/null
+rm -f /tmp/route_watchdog.lock /tmp/ipset_update.lock 2>/dev/null
+
 sh /etc/storage/ipset_update.sh
 
 # Запускаем watchdog сразу после первого импорта
