@@ -40,33 +40,35 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-b
 > ⚠️ **Устанавливайте по ТЕГУ, а не по ветке** — так вы получаете зафиксированную,
 > проверенную версию, которую нельзя изменить посторонним коммитом.
 
-**Стабильная (проверенная) — ставьте её:**
+Текущая стабильная — **v3.11.0-beta**:
 
 ```sh
 curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/install.sh | sh
 ```
 
-**Бета-канал (для тестеров, только при участии в закрытом тесте):**
-
-```sh
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.12.0-beta/install.sh | sh
-```
-
 После завершения (2–3 минуты) роутер можно перезагрузить: `reboot`.
 
-### ✅ Проверка после установки (self-test)
+> 🔜 **v3.12.0-beta** (автообучение QUIC/443, `selftest.sh`, `rollback.sh`, снапшот) проходит
+> закрытый тест. Публичная ссылка появится после выпуска тега `v3.12.0-beta`.
+
+### ✅ Проверка после установки
+
+Быстрая проверка ключевых элементов:
 
 ```sh
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/selftest.sh | sh
+ip link show wg0
+ipset list bypass_nets | grep 'Number of entries'
+ip rule show | grep 'fwmark 0xca6c'
+ip route show table 51 | grep wg0
 ```
 
-Скрипт вернёт `FAIL=0` и «Система в строю», если всё поднялось.
-
-### 🧪 Полная диагностика
+Полная диагностика (рекомендуется):
 
 ```sh
 curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/diagnostic.sh | sh
 ```
+
+> 💡 В **v3.12+** для этого есть отдельный `selftest.sh` (в v3.11 его нет).
 
 ## ✅ Проверка работы
 
@@ -130,19 +132,30 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-b
 
 ## ↩️ Откат, если что-то пошло не так
 
-`install.sh` перед изменениями делает **снапшот** в `/etc/storage/pwb-backup-<ts>/`.
-Если что-то сломалось — откат без потери связи:
+Связь сохраняется потому, что установщик **не трогает VPN-конфиг и таблицу 51**.
+
+**v3.11 (текущая стабильная):** отдельного `rollback.sh` нет — установка идемпотентна,
+повторный запуск безопасно вернёт штатные скрипты:
 
 ```sh
-# 1) вернуть предыдущие скрипты из последнего снапшота
-sh /etc/storage/rollback.sh
-
-# 2) проверить состояние
-sh /etc/storage/selftest.sh
+# переустановить ту же версию поверх
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/install.sh | sh
+# проверить
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/diagnostic.sh | sh
 ```
 
-Откат НЕ трогает VPN-конфиг и таблицу 51, поэтому связь сохраняется. Если совсем плохо —
-`sh /etc/storage/uninstall.sh` вернёт роутер к штатной маршрутизации (с автоперезагрузкой).
+Крайняя мера — полный возврат к штатной маршрутизации (с автоперезагрузкой):
+
+```sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/uninstall.sh | sh
+```
+
+**v3.12+ (закрытый тест):** появится офлайн-откат из снапшота (без сети):
+
+```sh
+sh /etc/storage/rollback.sh      # вернуть скрипты из /etc/storage/pwb-backup-<ts>
+sh /etc/storage/selftest.sh      # проверка (FAIL=0 → «Система в строю»)
+```
 
 > 🛡️ Снапшот содержит `route_watchdog.sh`, `ipset_update.sh`, `started_script.sh`,
 > `diagnostic.sh` и crontab на момент установки.
