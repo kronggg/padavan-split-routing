@@ -1,10 +1,34 @@
 #!/bin/sh
 # =============================================================================
 #  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
-#  Версия 3.11.0-beta (финальная, с поддержкой IPv6)
+#  Версия 3.13.0-beta (dnsmasq-ipset: доменный блок-лист вместо автообучения)
 # =============================================================================
 
-echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.11.0-beta ==="
+echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.13.0-beta ==="
+
+# -----------------------------------------------------------------------------
+# 0. Снапшот текущей установки (для отката через rollback.sh)
+# -----------------------------------------------------------------------------
+BK_TS=$(date +%Y%m%d-%H%M%S)
+BK_DIR="/etc/storage/pwb-backup-$BK_TS"
+mkdir -p "$BK_DIR" 2>/dev/null
+SNAP_OK=0
+for f in route_watchdog.sh ipset_update.sh started_script.sh diagnostic.sh; do
+    if [ -f "/etc/storage/$f" ]; then
+        cp -a "/etc/storage/$f" "$BK_DIR/$f" 2>/dev/null && SNAP_OK=1
+    fi
+done
+if [ -f /etc/storage/cron/crontabs/admin ]; then
+    cp -a /etc/storage/cron/crontabs/admin "$BK_DIR/crontab.admin" 2>/dev/null && SNAP_OK=1
+fi
+if [ "$SNAP_OK" = "1" ]; then
+    # Храним максимум 3 последних снапшота
+    ls -dt /etc/storage/pwb-backup-* 2>/dev/null | tail -n +4 | while read old; do rm -rf "$old" 2>/dev/null; done
+    echo "Снапшот создан: $BK_DIR (откат: sh /etc/storage/rollback.sh)"
+else
+    rmdir "$BK_DIR" 2>/dev/null
+    echo "Снапшот не создан (нет предыдущей установки)"
+fi
 
 # -----------------------------------------------------------------------------
 # 1. Создание основного скрипта ipset_update.sh
@@ -33,14 +57,12 @@ VPN_IFACE="wg0"
 TABLE_ID=51
 MARK_VALUE="0xca6c"
 LOG_FILE="/tmp/ipset_update.log"
-LEARNED_CACHE="/etc/storage/learned_ips.cache"
 
 CIDR_SOURCES="
 https://raw.githubusercontent.com/you-oops-dev/resolving-public/main/unblock_suite_ip_ipset.txt
 https://raw.githubusercontent.com/you-oops-dev/resolving-public/main/unblock_suite_ip.txt
-https://antifilter.download/list/subnet.lst
-https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/main/text/ru-blocked.txt
-https://raw.githubusercontent.com/1andrevich/Re-filter-lists/main/cidr.txt
+https://antifilter.download/list/allyouneed.lst
+https://community.antifilter.download/list/community.lst
 https://raw.githubusercontent.com/1andrevich/Re-filter-lists/main/ipsum.lst
 https://raw.githubusercontent.com/lord-alfred/ipranges/main/google/ipv4_merged.txt
 https://raw.githubusercontent.com/lord-alfred/ipranges/main/cloudflare/ipv4_merged.txt
@@ -50,6 +72,13 @@ https://raw.githubusercontent.com/lord-alfred/ipranges/main/twitter/ipv4_merged.
 https://raw.githubusercontent.com/lord-alfred/ipranges/main/amazon/ipv4_merged.txt
 https://raw.githubusercontent.com/lord-alfred/ipranges/main/microsoft/ipv4_merged.txt
 "
+# --- v3.13: доменный блок-лист для dnsmasq ---
+# «Россия inside» = ресурсы, блокируемые в РФ (Block/GeoBlock/News/Porn +
+# YouTube/Discord/Meta/Twitter/TikTok). dnsmasq кладёт их IP в bypass_nets.
+# Формат строк: ipset=/домен/…/set — подменяем имя set на ${IPSET_NAME}.
+DNSMASQ_DOMAINS_URL="https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-dnsmasq-ipset.lst"
+DNSMASQ_SRC_SET="vpn_domains"   # имя set в исходном файле itdoginfo
+DNSMASQ_CONF="/etc/storage/dnsmasq/dnsmasq.conf"
 CIDR6_SOURCES="
 https://raw.githubusercontent.com/lord-alfred/ipranges/main/telegram/ipv6_merged.txt
 https://raw.githubusercontent.com/lord-alfred/ipranges/main/facebook/ipv6_merged.txt
@@ -265,22 +294,58 @@ update_ipset6() {
 }
 
 # -----------------------------------------------------------------------------
-# Восстановление выученных IP
+# v3.13: dnsmasq — доменный блок-лист → $IPSET_NAME
+# dnsmasq сам добавляет IP в ipset при резолве домена (ipset=/…/bypass_nets).
+# Точный blocked-only: в WARP попадают IP ТОЛЬКО доменов из блок-листа,
+# а не «всё, к чему обращались» (в этом был баг learn-everything v3.12).
 # -----------------------------------------------------------------------------
-restore_learned() {
-    [ -f "$LEARNED_CACHE" ] || return 0
-    local count=0
-    while read ip; do
-        [ -z "$ip" ] && continue
-        ipset add "$IPSET_NAME" "$ip" -exist 2>/dev/null && count=$((count+1))
-    done < "$LEARNED_CACHE"
-    log "Восстановлено выученных IP: $count"
+setup_dnsmasq() {
+    log "=== DNSMASQ: доменный блок-лист → $IPSET_NAME ==="
+    local tmp="/tmp/dnsmasq_domains.raw"
+    local out="/tmp/dnsmasq_domains.ipset"
+    wget -q -O "$tmp" "$DNSMASQ_DOMAINS_URL" 2>/dev/null
+    if [ ! -s "$tmp" ]; then
+        log "ОШИБКА: не скачал доменный список ($DNSMASQ_DOMAINS_URL)"
+        rm -f "$tmp"
+        return 1
+    fi
+    # Преобразуем имя set: …/vpn_domains → …/bypass_nets; берём только ipset=-строки
+    grep '^ipset=/' "$tmp" | sed "s|/${DNSMASQ_SRC_SET}\$|/${IPSET_NAME}|" > "$out"
+    local n=$(grep -c '^ipset=/' "$out" 2>/dev/null)
+    [ -z "$n" ] && n=0
+    if [ "$n" -lt 10 ]; then
+        log "ОШИБКА: доменный список пуст/мал ($n строк) — dnsmasq не настраиваю"
+        rm -f "$tmp" "$out"
+        return 1
+    fi
+    local conf="$DNSMASQ_CONF"
+    if [ ! -d "$(dirname "$conf")" ]; then
+        conf="/etc/storage/dnsmasq.conf"
+        log "WARN: $DNSMASQ_CONF недоступен — использую $conf"
+    fi
+    if [ -f "$conf" ]; then
+        sed -i '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</d' "$conf" 2>/dev/null
+    fi
+    {
+        echo "# >>> PWB dnsmasq ipset >>>"
+        echo "# auto-generated $(date) — не редактировать вручную"
+        cat "$out"
+        echo "# <<< PWB dnsmasq ipset <<<"
+    } >> "$conf"
+    rm -f "$tmp" "$out"
+    if pidof dnsmasq >/dev/null 2>&1; then
+        killall -HUP dnsmasq 2>/dev/null
+        log "dnsmasq: конфиг перечитан (HUP), доменов: $n"
+    else
+        log "dnsmasq: не запущен — конфиг записан, применится при старте (доменов: $n)"
+    fi
+    return 0
 }
 
 # -----------------------------------------------------------------------------
 # Главный блок
 # -----------------------------------------------------------------------------
-log "=== СТАРТ v3.11.0-beta ==="
+log "=== СТАРТ v3.13.0-beta ==="
 if wait_for_network; then
     setup_policy_routing
     setup_iptables
@@ -342,7 +407,10 @@ if wait_for_network; then
         update_ipset6
     fi
 
-    restore_learned
+    # v3.13: настраиваем dnsmasq (доменный блок-лист → $IPSET_NAME).
+    # Заменяет автообучение/restore_learned: IP добавляет dnsmasq при
+    # резолве доменов блок-листа, плюс статические CIDR (update_ipset).
+    setup_dnsmasq
 else
     log "КРИТИЧЕСКАЯ ОШИБКА: сеть или VPN не готовы, завершаюсь"
     exit 1
@@ -374,9 +442,12 @@ modprobe ip6_set 2>/dev/null
 modprobe ip6_set_hash_net 2>/dev/null
 
 INTERVAL=15
-ANALYZE_INTERVAL=60
-LAST_ANALYZE=0
-LEARNED_CACHE="/etc/storage/learned_ips.cache"
+WG0_WAIT_LOGGED=0        # флаг: сообщение 'wg0 не поднят' пишем один раз, без спама
+
+# --- v3.13: IP попадают в bypass_nets ТОЛЬКО через dnsmasq (доменный блок-лист) ---
+# или через статические CIDR-источники (см. ipset_update.sh).
+# Автообучение по dmesg/LOG УДАЛЕНО: оно добавляло в WARP любой посещённый IP
+# (learn-everything) — именно это гнало «обычные» сайты в туннель.
 
 while true; do
     if ip rule show | grep -q "not.*fwmark 0xca6c"; then
@@ -385,14 +456,28 @@ while true; do
         echo "[$(date)] Watchdog: удалено not-правило" >> /tmp/route_watchdog.log
     fi
 
-    if ! ip route show table 51 | grep -q "default dev wg0"; then
-        ip route replace default dev wg0 table 51
-        echo "[$(date)] Watchdog: исправлен маршрут в table 51" >> /tmp/route_watchdog.log
-    fi
+    # wg0 может отсутствовать на ранней стадии загрузки — тогда wg0-операции
+    # пропускаем молча (без спама в stderr); при появлении wg0 цикл подхватит.
+    if ! ip link show wg0 >/dev/null 2>&1; then
+        if [ "$WG0_WAIT_LOGGED" != "1" ]; then
+            WG0_WAIT_LOGGED=1
+            echo "[$(date)] Watchdog: wg0 ещё не поднят — маршрут/rp_filter пропущены" >> /tmp/route_watchdog.log
+        fi
+    else
+        WG0_WAIT_LOGGED=0
+        if ! ip route show table 51 | grep -q "default dev wg0"; then
+            ip route replace default dev wg0 table 51 2>/dev/null
+            echo "[$(date)] Watchdog: исправлен маршрут в table 51" >> /tmp/route_watchdog.log
+        fi
 
-    if [ "$(sysctl -n net.ipv4.conf.wg0.rp_filter 2>/dev/null)" != "0" ]; then
-        echo 0 > /proc/sys/net/ipv4/conf/wg0/rp_filter
-        echo "[$(date)] Watchdog: исправлен rp_filter" >> /tmp/route_watchdog.log
+        if [ "$(sysctl -n net.ipv4.conf.wg0.rp_filter 2>/dev/null)" != "0" ]; then
+            # Проверяем путь явно: `echo > несуществующий_путь` печатает ошибку
+            # редиректа ДО 2>/dev/null (шелл раскрывает редирект раньше) — так не шумим.
+            if [ -f /proc/sys/net/ipv4/conf/wg0/rp_filter ]; then
+                echo 0 > /proc/sys/net/ipv4/conf/wg0/rp_filter 2>/dev/null
+                echo "[$(date)] Watchdog: исправлен rp_filter" >> /tmp/route_watchdog.log
+            fi
+        fi
     fi
 
     if ! iptables -t mangle -C PREROUTING -m set --match-set bypass_nets dst -j MARK --set-mark 0xca6c 2>/dev/null; then
@@ -409,6 +494,10 @@ while true; do
         iptables -t mangle -A PREROUTING ! -i wg0 -m connmark --mark 0xca6c -j CONNMARK --restore-mark
         echo "[$(date)] Watchdog: добавлено правило CONNMARK restore" >> /tmp/route_watchdog.log
     fi
+
+    # --- v3.13: LOG-правила автообучения УДАЛЕНЫ (learn-everything) ---
+    # IP → bypass_nets добавляет dnsmasq при резолве доменов из блок-листа
+    # (ipset=/…/bypass_nets), плюс статические CIDR. Здесь ничего не логируется.
 
     # Создание ipset6, если его ещё нет
     if ! ipset list bypass_nets6 >/dev/null 2>&1; then
@@ -438,24 +527,169 @@ while true; do
     fi
 
     NOW=$(date +%s)
-    if [ $(( NOW - LAST_ANALYZE )) -ge $ANALYZE_INTERVAL ]; then
-        LAST_ANALYZE=$NOW
-        dmesg | grep -E "DPT=443.*SYN|SYN.*DPT=443" | tail -30 | while read line; do
-            DST_IP=$(echo "$line" | grep -oE 'DST=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | cut -d'=' -f2)
-            if [ -n "$DST_IP" ] && ! ipset test bypass_nets "$DST_IP" 2>/dev/null; then
-                ipset add bypass_nets "$DST_IP" -exist
-                echo "[$(date)] Watchdog: Автоматически добавлен IP $DST_IP" >> /tmp/route_watchdog.log
-                echo "$DST_IP" >> "$LEARNED_CACHE"
-            fi
-        done
-        dmesg -c > /dev/null 2>&1
-    fi
-
     sleep $INTERVAL
 done
 EOF_WATCHDOG
 
 chmod +x /etc/storage/route_watchdog.sh
+
+# -----------------------------------------------------------------------------
+# 2b. rollback.sh — откат без сети (встроен, всегда доступен на роутере)
+# -----------------------------------------------------------------------------
+cat > /etc/storage/rollback.sh << 'EOF_ROLLBACK'
+#!/bin/sh
+# Откат к последнему снапшоту перед установкой. Не требует сети.
+BKDIR="$1"
+[ -z "$BKDIR" ] && BKDIR=$(ls -dt /etc/storage/pwb-backup-* 2>/dev/null | head -1)
+echo "=== ROLLBACK ==="
+if [ -z "$BKDIR" ] || [ ! -d "$BKDIR" ]; then
+    echo "  [FAIL] снапшот не найден:"
+    ls -dt /etc/storage/pwb-backup-* 2>/dev/null || echo "    (нет)"
+    exit 1
+fi
+echo "  Снапшот: $BKDIR"
+killall route_watchdog.sh 2>/dev/null
+killall ipset_update.sh 2>/dev/null
+rm -f /tmp/route_watchdog.lock /tmp/ipset_update.lock 2>/dev/null
+for f in route_watchdog.sh ipset_update.sh started_script.sh diagnostic.sh; do
+    [ -f "$BKDIR/$f" ] && cp -a "$BKDIR/$f" /etc/storage/"$f" && echo "  [OK] восстановлен $f"
+done
+if [ -f "$BKDIR/crontab.admin" ]; then
+    cp -a "$BKDIR/crontab.admin" /etc/storage/cron/crontabs/admin 2>/dev/null && killall crond 2>/dev/null && crond && echo "  [OK] crontab"
+fi
+iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p tcp -m multiport --dports 80,443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
+iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p udp --dport 443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
+# v3.13: убираем блок dnsmasq селективности из конфига
+DCONF="/etc/storage/dnsmasq/dnsmasq.conf"
+[ -f "$DCONF" ] || DCONF="/etc/storage/dnsmasq.conf"
+if [ -f "$DCONF" ]; then
+    sed -i '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</d' "$DCONF" 2>/dev/null
+    pidof dnsmasq >/dev/null 2>&1 && killall -HUP dnsmasq 2>/dev/null
+fi
+mtd_storage.sh save >/dev/null 2>&1
+[ -x /etc/storage/route_watchdog.sh ] && /etc/storage/route_watchdog.sh & echo "  [OK] watchdog перезапущен"
+echo "  ROLLBACK завершён. Проверь: sh /etc/storage/selftest.sh"
+exit 0
+EOF_ROLLBACK
+chmod +x /etc/storage/rollback.sh
+
+# -----------------------------------------------------------------------------
+# 2c. selftest.sh — само-проверка (встроен, offline-доступен после отката)
+# -----------------------------------------------------------------------------
+cat > /etc/storage/selftest.sh << 'EOF_SELFTEST'
+#!/bin/sh
+# =============================================================================
+#  selftest.sh — само-проверка после установки (Padavan / BusyBox)
+#  Возвращает 0, если система в строю; иначе ненулевой код.
+#  Использование:  sh /etc/storage/selftest.sh   (или curl ... | sh)
+# =============================================================================
+
+FAIL=0
+WARN=0
+ok()   { echo "  [OK]   $1"; }
+fail() { echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
+warn() { echo "  [WARN] $1"; WARN=$((WARN+1)); }
+
+echo "=============================================="
+echo "   SELF-TEST селективной маршрутизации"
+echo "=============================================="
+
+# --- 1. Скрипты на месте ---
+if [ -f /etc/storage/route_watchdog.sh ] && [ -x /etc/storage/route_watchdog.sh ]; then
+    ok "route_watchdog.sh на месте и исполняем"
+else
+    fail "route_watchdog.sh отсутствует/не исполняем"
+fi
+if [ -f /etc/storage/ipset_update.sh ]; then
+    ok "ipset_update.sh на месте"
+else
+    fail "ipset_update.sh отсутствует"
+fi
+
+# --- 2. VPN-интерфейс ---
+if ip link show wg0 >/dev/null 2>&1; then
+    ok "интерфейс wg0 существует"
+else
+    fail "интерфейс wg0 отсутствует (VPN не поднят?)"
+fi
+
+# --- 3. ipset ---
+if ipset list bypass_nets >/dev/null 2>&1; then
+    ENTRIES=$(ipset list bypass_nets 2>/dev/null | grep -oE 'Number of entries: [0-9]+' | awk '{print $4}')
+    if [ -n "$ENTRIES" ] && [ "$ENTRIES" -gt 0 ]; then
+        ok "ipset bypass_nets: $ENTRIES записей"
+    else
+        fail "ipset bypass_nets пуст"
+    fi
+else
+    fail "ipset bypass_nets не создан"
+fi
+
+# --- 4. Правила iptables (MARK / CONNMARK restore) ---
+if iptables -t mangle -C PREROUTING -m set --match-set bypass_nets dst -j MARK --set-mark 0xca6c 2>/dev/null; then
+    ok "правило MARK присутствует"
+else
+    fail "правило MARK отсутствует"
+fi
+if iptables -t mangle -C PREROUTING ! -i wg0 -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null \
+   || iptables -t mangle -C PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
+    ok "правило CONNMARK restore присутствует"
+else
+    fail "правило CONNMARK restore отсутствует"
+fi
+
+# --- 5. Policy routing ---
+if ip rule show 2>/dev/null | grep -q "fwmark 0xca6c lookup 51"; then
+    ok "ip rule (fwmark 0xca6c -> table 51) присутствует"
+else
+    fail "ip rule отсутствует"
+fi
+if ip route show table 51 2>/dev/null | grep -q "default dev wg0"; then
+    ok "маршрут table 51 -> wg0 присутствует"
+else
+    fail "маршрут table 51 -> wg0 отсутствует"
+fi
+
+# --- 6. dnsmasq-ipset (v3.13+: доменный блок-лист → bypass_nets) ---
+if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
+   || grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq.conf 2>/dev/null; then
+    if pidof dnsmasq >/dev/null 2>&1; then
+        ok "dnsmasq-ipset блок настроен и dnsmasq запущен"
+    else
+        warn "dnsmasq-ipset блок есть, но dnsmasq не запущен"
+    fi
+else
+    fail "dnsmasq-ipset блок не найден (домены → bypass_nets)"
+fi
+
+# --- 7. Источники CIDR загружены? ---
+if [ -f /etc/storage/bypass_nets.cidr ]; then
+    CIDRS=$(wc -l < /etc/storage/bypass_nets.cidr 2>/dev/null)
+    ok "bypass_nets.cidr: $CIDRS подсетей"
+else
+    warn "bypass_nets.cidr пока не создан"
+fi
+
+# --- 8. Cron ---
+if [ -f /etc/storage/cron/crontabs/admin ]; then
+    if grep -q 'route_watchdog.sh' /etc/storage/cron/crontabs/admin 2>/dev/null; then
+        ok "запись route_watchdog в cron присутствует"
+    else
+        warn "запись route_watchdog в cron отсутствует"
+    fi
+fi
+
+echo "=============================================="
+echo "   ИТОГ: FAIL=$FAIL  WARN=$WARN"
+echo "=============================================="
+if [ "$FAIL" -gt 0 ]; then
+    echo "  СИСТЕМА НЕ В СТРОЮ — см. FAIL выше"
+    exit 1
+fi
+echo "  Система в строю."
+exit 0
+EOF_SELFTEST
+chmod +x /etc/storage/selftest.sh
 
 # -----------------------------------------------------------------------------
 # 3. Настройка автозагрузки
@@ -505,8 +739,20 @@ mtd_storage.sh save
 
 echo ""
 echo "=============================================="
-echo "Установка v3.11.0-beta завершена. Запускаю первый импорт..."
+echo "Установка v3.13.0-beta завершена. Запускаю первый импорт..."
 echo "=============================================="
+
+# Устраняем возможный СТАРЫЙ инстанс watchdog/ipset_update.
+# При переустановке поверх старой версии старый watchdog держал lock
+# → новый инстанс выходил молча, и его правки не применялись.
+killall route_watchdog.sh 2>/dev/null
+killall ipset_update.sh 2>/dev/null
+rm -f /tmp/route_watchdog.lock /tmp/ipset_update.lock 2>/dev/null
+
+# v3.13 (C): сбрасываем старый кэш автообучения (learn-everything).
+# Сам ipset перестраивается в update_ipset (swap из CIDR) — выученный мусор уйдёт.
+rm -f /etc/storage/learned_ips.cache 2>/dev/null
+
 sh /etc/storage/ipset_update.sh
 
 # Запускаем watchdog сразу после первого импорта

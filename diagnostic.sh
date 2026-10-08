@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-#  Диагностика системы селективной маршрутизации v3.10+
+#  Диагностика системы селективной маршрутизации v3.13+
 #  Версия для GitHub (исправлена синтаксическая ошибка)
 # =============================================================================
 
@@ -128,6 +128,20 @@ if ip6tables -t mangle -C PREROUTING -m set --match-set bypass_nets6 dst -j CONN
 else
     echo "  [WARN] Правило CONNMARK save (IPv6) отсутствует"
     WARNINGS=$((WARNINGS+1))
+fi
+
+# --- Проверка dnsmasq-ipset (v3.13: доменный блок-лист → bypass_nets) ---
+if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
+   || grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq.conf 2>/dev/null; then
+    if pidof dnsmasq >/dev/null 2>&1; then
+        echo "  [OK] dnsmasq-ipset блок настроен, dnsmasq запущен"
+    else
+        echo "  [WARN] dnsmasq-ipset блок есть, dnsmasq не запущен"
+        WARNINGS=$((WARNINGS+1))
+    fi
+else
+    echo "  [FAIL] dnsmasq-ipset блок не найден (домены → bypass_nets)"
+    ERRORS=$((ERRORS+1))
 fi
 
 # -----------------------------------------------------------------------------

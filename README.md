@@ -1,6 +1,6 @@
 # 🚀 Селективная маршрутизация через AmneziaWG + WARP на Padavan
 
-![Версия](https://img.shields.io/badge/version-3.11.0--beta-blue)
+![Версия](https://img.shields.io/badge/version-3.13.0--beta-blue)
 ![Платформа](https://img.shields.io/badge/platform-Padavan-orange)
 ![Лицензия](https://img.shields.io/badge/license-MIT-green)
 
@@ -20,7 +20,7 @@
 - Охватывает **более 66 000 подсетей IPv4** и **75+ подсетей IPv6** (Telegram, Google, Cloudflare, Meta, Amazon, Microsoft и реестр РКН).
 - **Мгновенное восстановление** после перезагрузки (5–10 секунд) благодаря локальному CIDR-кэшу.
 - **Умное ожидание** готовности WAN и VPN (двойная проверка: ping + wget).
-- **Watchdog** с автообучением: сам исправляет правила после смены конфига WARP и добавляет проблемные IP.
+- **Watchdog** восстанавливает правила после смены конфига WARP. Пополнение `bypass_nets` — через **dnsmasq-ipset** (v3.13+): IP доменов из блок-листа попадают в сет автоматически при DNS-резолве (нагрузка на роутер ~0).
 - **Полная автоматизация**: установка одной командой, обновление списков каждые 6 часов.
 
 ## 🛠️ Требования
@@ -33,19 +33,46 @@
 
 Перед установкой системы вы можете быстро проверить, поддерживает ли ваш роутер и прошивка все необходимые компоненты. Для этого выполните одну команду:
 
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/hardware_check.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/hardware_check.sh | sh
 
 ## 📥 Установка (одной командой)
 
-Подключитесь к роутеру по SSH и выполните:
+> ⚠️ **Устанавливайте по ТЕГУ, а не по ветке** — так вы получаете зафиксированную,
+> проверенную версию, которую нельзя изменить посторонним коммитом.
 
-- curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/install.sh | sh
+Текущая стабильная — **v3.11.0-beta**:
 
-После завершения (2–3 минуты) роутер можно перезагрузить:
-- reboot.
+```sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/install.sh | sh
+```
 
-Диагностика системы:
-- curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/diagnostic.sh | sh
+После завершения (2–3 минуты) роутер можно перезагрузить: `reboot`.
+
+> 🔜 **v3.13.0-beta** (dnsmasq-ipset: доменный блок-лист вместо автообучения; `selftest.sh`, `rollback.sh`, снапшот) проходит
+> закрытый тест. Публичная ссылка появится после выпуска тега `v3.13.0-beta`.
+
+### ✅ Проверка после установки
+
+Быстрая проверка ключевых элементов:
+
+```sh
+ip link show wg0
+ipset list bypass_nets | grep 'Number of entries'
+ip rule show | grep 'fwmark 0xca6c'
+ip route show table 51 | grep wg0
+```
+
+Полная диагностика (рекомендуется):
+
+```sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.13.0-beta/diagnostic.sh | sh
+```
+
+> 💡 В **v3.12+** для быстрой проверки есть `selftest.sh`. Он устанавливается в
+> `/etc/storage/selftest.sh` и запускается локально, без сети:
+> `sh /etc/storage/selftest.sh` (FAIL=0 → «Система в строю»).
+> Оба скрипта (`selftest.sh`, `diagnostic.sh`) можно также запустить потоково:
+> `curl -sL .../<tag>/<script>.sh | sh`.
 
 ## ✅ Проверка работы
 
@@ -61,9 +88,11 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/hard
 - Policy routing: метка 0xca6c → таблица 51 → шлюз wg0 (для IPv4 и IPv6).
 - iptables: MARK + CONNMARK для сохранения метки в соединениях (IPv4 и IPv6).
 
-Watchdog: каждые 15 секунд проверяет и восстанавливает правила, анализирует dmesg для автообучения.
+Watchdog: каждые 15 секунд проверяет и восстанавливает правила (MARK/CONNMARK, policy routing, rp_filter).
 
-Cron: каждые 6 часов полное обновление списков.
+dnsmasq: при DNS-резолве добавляет IP доменов из блок-листа (`itdoginfo/allow-domains`) в `bypass_nets`.
+
+Cron: каждые 6 часов полное обновление CIDR-списков и доменного блок-листа.
 
 ## ⚠️ Известные ограничения
 
@@ -101,9 +130,41 @@ Cron: каждые 6 часов полное обновление списков
 
 ## 🗑 Удаление
 
-- curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/uninstall.sh | sh
+```sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/uninstall.sh | sh
+```
 
 После выполнения роутер автоматически перезагрузится и вернётся к стандартной маршрутизации.
+
+## ↩️ Откат, если что-то пошло не так
+
+Связь сохраняется потому, что установщик **не трогает VPN-конфиг и таблицу 51**.
+
+**v3.11 (текущая стабильная):** отдельного `rollback.sh` нет — установка идемпотентна,
+повторный запуск безопасно вернёт штатные скрипты:
+
+```sh
+# переустановить ту же версию поверх
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/install.sh | sh
+# проверить
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/diagnostic.sh | sh
+```
+
+Крайняя мера — полный возврат к штатной маршрутизации (с автоперезагрузкой):
+
+```sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/uninstall.sh | sh
+```
+
+**v3.12+ (закрытый тест):** офлайн-откат из снапшота и само-проверка (без сети):
+
+```sh
+sh /etc/storage/rollback.sh      # вернуть скрипты из /etc/storage/pwb-backup-<ts>
+sh /etc/storage/selftest.sh      # проверка (FAIL=0 → «Система в строю»)
+```
+
+> 🛡️ Снапшот содержит `route_watchdog.sh`, `ipset_update.sh`, `started_script.sh`,
+> `diagnostic.sh` и crontab на момент установки.
 
 ## 📄 Лицензия
 MIT License – вы можете свободно использовать, модифицировать и распространять этот код при условии сохранения авторских прав и дисклеймера.
