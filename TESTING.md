@@ -1,10 +1,15 @@
-# 🧪 Закрытое тестирование v3.13.0-rc1
+# 🧪 Закрытое тестирование v3.13.0-beta
 
 > Приватный стенд. Публичный релиз: `kronggg/padavan-warp-bypass`.
 > НЕ распространять содержимое этого репозитория.
 
-**Артефакт:** тег `v3.13.0-rc1` — см. **Releases**.
+**Артефакт:** тег `v3.13.0-beta` — см. **Releases**.
 **sha256 архива:** указан на странице релиза; сверьте после скачивания.
+
+> ⚠️ **Команды ниже — копируйте ПО ОДНОЙ строке.** Не вставляйте блок
+> целиком вместе с пояснениями и не вставляйте угловые скобки `<...>` —
+> в `sh` символ `<` означает перенаправление ввода и даёт
+> `syntax error: unexpected newline`.
 
 ---
 
@@ -31,7 +36,7 @@
 
 ```sh
 # Pinned-тег (без CDN-гонки):
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.13.0-rc1/install.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.13.0-beta/install.sh | sh
 ```
 
 > ⚠️ Устанавливать можно **поверх v3.11/v3.12** — `install.sh` сначала делает снапшот.
@@ -52,7 +57,9 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.13.0-r
 - [ ] Блок в конфиге есть:
       `grep -c 'ipset=/.*/bypass_nets' /etc/storage/dnsmasq/dnsmasq.conf` *(ожидаем ~1183; путь может быть `/etc/storage/dnsmasq.conf`)*
 - [ ] `pidof dnsmasq` → процесс есть
-- [ ] **E2E:** `nslookup discord.com 127.0.0.1` → взять IP → `ipset test bypass_nets <IP>` → **member**
+- [ ] **E2E (одной строкой):**
+      `D=$(nslookup discord.com 127.0.0.1 | grep Address | tail -1 | awk '{print $2}'); echo "IP=$D"; ipset test bypass_nets $D`
+      → ожидаем **is in set bypass_nets** (member)
 - [ ] `ipset list bypass_nets | grep 'Number of entries'` → растёт после DNS-запросов
 
 ### C. Само-проверка
@@ -60,7 +67,9 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.13.0-r
 
 ### D. Ключевая проверка философии (главное!)
 - [ ] В браузере **`2ip.ru`** → показывает **провайдера** (НЕ Cloudflare/WARP)
-- [ ] `ipset test bypass_nets <IP 2ip.ru>` → **NOT** member *(если member — блок-лист слишком широкий, сообщить)*
+- [ ] **Обычный сайт — НЕ в туннеле (одной строкой):**
+      `D=$(nslookup 2ip.ru 127.0.0.1 | grep Address | tail -1 | awk '{print $2}'); echo "IP=$D"; ipset test bypass_nets $D`
+      → ожидаем **is NOT in set bypass_nets** *(если member — блок-лист слишком широкий, сообщить)*
 - [ ] YouTube/Discord/Telegram → открываются (через туннель)
 
 ### E. Откат (безопасность)
