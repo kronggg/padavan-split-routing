@@ -20,7 +20,7 @@
 - Охватывает **более 66 000 подсетей IPv4** и **75+ подсетей IPv6** (Telegram, Google, Cloudflare, Meta, Amazon, Microsoft и реестр РКН).
 - **Мгновенное восстановление** после перезагрузки (5–10 секунд) благодаря локальному CIDR-кэшу.
 - **Умное ожидание** готовности WAN и VPN (двойная проверка: ping + wget).
-- **Watchdog** с автообучением: сам исправляет правила после смены конфига WARP и добавляет проблемные IP.
+- **Watchdog** с автообучением: сам исправляет правила после смены конфига WARP, а также учится на трафике — **TCP 80/443 + UDP/QUIC 443** (v3.12+), добавляя проблемные адреса в `bypass_nets`.
 - **Полная автоматизация**: установка одной командой, обновление списков каждые 6 часов.
 
 ## 🛠️ Требования
@@ -33,19 +33,40 @@
 
 Перед установкой системы вы можете быстро проверить, поддерживает ли ваш роутер и прошивка все необходимые компоненты. Для этого выполните одну команду:
 
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/hardware_check.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/hardware_check.sh | sh
 
 ## 📥 Установка (одной командой)
 
-Подключитесь к роутеру по SSH и выполните:
+> ⚠️ **Устанавливайте по ТЕГУ, а не по ветке** — так вы получаете зафиксированную,
+> проверенную версию, которую нельзя изменить посторонним коммитом.
 
-- curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/install.sh | sh
+**Стабильная (проверенная) — ставьте её:**
 
-После завершения (2–3 минуты) роутер можно перезагрузить:
-- reboot.
+```sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/install.sh | sh
+```
 
-Диагностика системы:
-- curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/diagnostic.sh | sh
+**Бета-канал (для тестеров, только при участии в закрытом тесте):**
+
+```sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.12.0-beta/install.sh | sh
+```
+
+После завершения (2–3 минуты) роутер можно перезагрузить: `reboot`.
+
+### ✅ Проверка после установки (self-test)
+
+```sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/selftest.sh | sh
+```
+
+Скрипт вернёт `FAIL=0` и «Система в строю», если всё поднялось.
+
+### 🧪 Полная диагностика
+
+```sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/diagnostic.sh | sh
+```
 
 ## ✅ Проверка работы
 
@@ -101,9 +122,30 @@ Cron: каждые 6 часов полное обновление списков
 
 ## 🗑 Удаление
 
-- curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/uninstall.sh | sh
+```sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/uninstall.sh | sh
+```
 
 После выполнения роутер автоматически перезагрузится и вернётся к стандартной маршрутизации.
+
+## ↩️ Откат, если что-то пошло не так
+
+`install.sh` перед изменениями делает **снапшот** в `/etc/storage/pwb-backup-<ts>/`.
+Если что-то сломалось — откат без потери связи:
+
+```sh
+# 1) вернуть предыдущие скрипты из последнего снапшота
+sh /etc/storage/rollback.sh
+
+# 2) проверить состояние
+sh /etc/storage/selftest.sh
+```
+
+Откат НЕ трогает VPN-конфиг и таблицу 51, поэтому связь сохраняется. Если совсем плохо —
+`sh /etc/storage/uninstall.sh` вернёт роутер к штатной маршрутизации (с автоперезагрузкой).
+
+> 🛡️ Снапшот содержит `route_watchdog.sh`, `ipset_update.sh`, `started_script.sh`,
+> `diagnostic.sh` и crontab на момент установки.
 
 ## 📄 Лицензия
 MIT License – вы можете свободно использовать, модифицировать и распространять этот код при условии сохранения авторских прав и дисклеймера.

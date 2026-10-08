@@ -7,6 +7,30 @@
 echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.12.0-beta ==="
 
 # -----------------------------------------------------------------------------
+# 0. Снапшот текущей установки (для отката через rollback.sh)
+# -----------------------------------------------------------------------------
+BK_TS=$(date +%Y%m%d-%H%M%S)
+BK_DIR="/etc/storage/pwb-backup-$BK_TS"
+mkdir -p "$BK_DIR" 2>/dev/null
+SNAP_OK=0
+for f in route_watchdog.sh ipset_update.sh started_script.sh diagnostic.sh; do
+    if [ -f "/etc/storage/$f" ]; then
+        cp -a "/etc/storage/$f" "$BK_DIR/$f" 2>/dev/null && SNAP_OK=1
+    fi
+done
+if [ -f /etc/storage/cron/crontabs/admin ]; then
+    cp -a /etc/storage/cron/crontabs/admin "$BK_DIR/crontab.admin" 2>/dev/null && SNAP_OK=1
+fi
+if [ "$SNAP_OK" = "1" ]; then
+    # Храним максимум 3 последних снапшота
+    ls -dt /etc/storage/pwb-backup-* 2>/dev/null | tail -n +4 | while read old; do rm -rf "$old" 2>/dev/null; done
+    echo "Снапшот создан: $BK_DIR (откат: sh /etc/storage/rollback.sh)"
+else
+    rmdir "$BK_DIR" 2>/dev/null
+    echo "Снапшот не создан (нет предыдущей установки)"
+fi
+
+# -----------------------------------------------------------------------------
 # 1. Создание основного скрипта ipset_update.sh
 # -----------------------------------------------------------------------------
 cat > /etc/storage/ipset_update.sh << 'EOF_SCRIPT'
@@ -491,6 +515,39 @@ done
 EOF_WATCHDOG
 
 chmod +x /etc/storage/route_watchdog.sh
+
+# -----------------------------------------------------------------------------
+# 2b. rollback.sh — откат без сети (встроен, всегда доступен на роутере)
+# -----------------------------------------------------------------------------
+cat > /etc/storage/rollback.sh << 'EOF_ROLLBACK'
+#!/bin/sh
+# Откат к последнему снапшоту перед установкой. Не требует сети.
+BKDIR="$1"
+[ -z "$BKDIR" ] && BKDIR=$(ls -dt /etc/storage/pwb-backup-* 2>/dev/null | head -1)
+echo "=== ROLLBACK ==="
+if [ -z "$BKDIR" ] || [ ! -d "$BKDIR" ]; then
+    echo "  [FAIL] снапшот не найден:"
+    ls -dt /etc/storage/pwb-backup-* 2>/dev/null || echo "    (нет)"
+    exit 1
+fi
+echo "  Снапшот: $BKDIR"
+killall route_watchdog.sh 2>/dev/null
+killall ipset_update.sh 2>/dev/null
+rm -f /tmp/route_watchdog.lock /tmp/ipset_update.lock 2>/dev/null
+for f in route_watchdog.sh ipset_update.sh started_script.sh diagnostic.sh; do
+    [ -f "$BKDIR/$f" ] && cp -a "$BKDIR/$f" /etc/storage/"$f" && echo "  [OK] восстановлен $f"
+done
+if [ -f "$BKDIR/crontab.admin" ]; then
+    cp -a "$BKDIR/crontab.admin" /etc/storage/cron/crontabs/admin 2>/dev/null && killall crond 2>/dev/null && crond && echo "  [OK] crontab"
+fi
+iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p tcp -m multiport --dports 80,443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
+iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p udp --dport 443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
+mtd_storage.sh save >/dev/null 2>&1
+[ -x /etc/storage/route_watchdog.sh ] && /etc/storage/route_watchdog.sh & echo "  [OK] watchdog перезапущен"
+echo "  ROLLBACK завершён. Проверь: sh /etc/storage/diagnostic.sh"
+exit 0
+EOF_ROLLBACK
+chmod +x /etc/storage/rollback.sh
 
 # -----------------------------------------------------------------------------
 # 3. Настройка автозагрузки
