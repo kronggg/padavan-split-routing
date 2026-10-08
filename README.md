@@ -1,6 +1,6 @@
 # 🚀 Селективная маршрутизация через AmneziaWG + WARP на Padavan
 
-![Версия](https://img.shields.io/badge/version-3.12.0--beta-blue)
+![Версия](https://img.shields.io/badge/version-3.13.0--beta-blue)
 ![Платформа](https://img.shields.io/badge/platform-Padavan-orange)
 ![Лицензия](https://img.shields.io/badge/license-MIT-green)
 
@@ -20,7 +20,7 @@
 - Охватывает **более 66 000 подсетей IPv4** и **75+ подсетей IPv6** (Telegram, Google, Cloudflare, Meta, Amazon, Microsoft и реестр РКН).
 - **Мгновенное восстановление** после перезагрузки (5–10 секунд) благодаря локальному CIDR-кэшу.
 - **Умное ожидание** готовности WAN и VPN (двойная проверка: ping + wget).
-- **Watchdog** с автообучением: сам исправляет правила после смены конфига WARP, а также учится на трафике — **TCP 80/443 + UDP/QUIC 443** (v3.12+), добавляя проблемные адреса в `bypass_nets`.
+- **Watchdog** восстанавливает правила после смены конфига WARP. Пополнение `bypass_nets` — через **dnsmasq-ipset** (v3.13+): IP доменов из блок-листа попадают в сет автоматически при DNS-резолве (нагрузка на роутер ~0).
 - **Полная автоматизация**: установка одной командой, обновление списков каждые 6 часов.
 
 ## 🛠️ Требования
@@ -48,8 +48,8 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-b
 
 После завершения (2–3 минуты) роутер можно перезагрузить: `reboot`.
 
-> 🔜 **v3.12.0-beta** (автообучение QUIC/443, `selftest.sh`, `rollback.sh`, снапшот) проходит
-> закрытый тест. Публичная ссылка появится после выпуска тега `v3.12.0-beta`.
+> 🔜 **v3.13.0-beta** (dnsmasq-ipset: доменный блок-лист вместо автообучения; `selftest.sh`, `rollback.sh`, снапшот) проходит
+> закрытый тест. Публичная ссылка появится после выпуска тега `v3.13.0-beta`.
 
 ### ✅ Проверка после установки
 
@@ -65,10 +65,14 @@ ip route show table 51 | grep wg0
 Полная диагностика (рекомендуется):
 
 ```sh
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/diagnostic.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.13.0-beta/diagnostic.sh | sh
 ```
 
-> 💡 В **v3.12+** для этого есть отдельный `selftest.sh` (в v3.11 его нет).
+> 💡 В **v3.12+** для быстрой проверки есть `selftest.sh`. Он устанавливается в
+> `/etc/storage/selftest.sh` и запускается локально, без сети:
+> `sh /etc/storage/selftest.sh` (FAIL=0 → «Система в строю»).
+> Оба скрипта (`selftest.sh`, `diagnostic.sh`) можно также запустить потоково:
+> `curl -sL .../<tag>/<script>.sh | sh`.
 
 ## ✅ Проверка работы
 
@@ -84,9 +88,11 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-b
 - Policy routing: метка 0xca6c → таблица 51 → шлюз wg0 (для IPv4 и IPv6).
 - iptables: MARK + CONNMARK для сохранения метки в соединениях (IPv4 и IPv6).
 
-Watchdog: каждые 15 секунд проверяет и восстанавливает правила, анализирует dmesg для автообучения.
+Watchdog: каждые 15 секунд проверяет и восстанавливает правила (MARK/CONNMARK, policy routing, rp_filter).
 
-Cron: каждые 6 часов полное обновление списков.
+dnsmasq: при DNS-резолве добавляет IP доменов из блок-листа (`itdoginfo/allow-domains`) в `bypass_nets`.
+
+Cron: каждые 6 часов полное обновление CIDR-списков и доменного блок-листа.
 
 ## ⚠️ Известные ограничения
 
@@ -150,7 +156,7 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-b
 curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.11.0-beta/uninstall.sh | sh
 ```
 
-**v3.12+ (закрытый тест):** появится офлайн-откат из снапшота (без сети):
+**v3.12+ (закрытый тест):** офлайн-откат из снапшота и само-проверка (без сети):
 
 ```sh
 sh /etc/storage/rollback.sh      # вернуть скрипты из /etc/storage/pwb-backup-<ts>

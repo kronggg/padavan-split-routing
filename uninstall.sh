@@ -1,7 +1,7 @@
 #!/bin/sh
 # =============================================================================
 #  Скрипт полного удаления системы селективной маршрутизации
-#  Версия 1.3 от 2026-04-24 (соответствует v3.10.9-beta, удаляет IPv6-компоненты)
+#  Версия 1.4 от 2026-10-08 (v3.13: dnsmasq-ipset вместо автообучения)
 # =============================================================================
 
 echo "=== Полное удаление системы селективной маршрутизации ==="
@@ -48,6 +48,14 @@ ip6tables -t mangle -D PREROUTING -m set --match-set bypass_nets6 dst -j CONNMAR
 # Удаляем LOG-правила автообучения (Фаза 4)
 iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p tcp -m multiport --dports 80,443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
 iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p udp --dport 443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
+
+# Удаляем блок dnsmasq селективности (v3.13)
+DCONF="/etc/storage/dnsmasq/dnsmasq.conf"
+[ -f "$DCONF" ] || DCONF="/etc/storage/dnsmasq.conf"
+if [ -f "$DCONF" ]; then
+    sed -i '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</d' "$DCONF" 2>/dev/null
+    pidof dnsmasq >/dev/null 2>&1 && killall -HUP dnsmasq 2>/dev/null
+fi
 
 # Удаляем policy routing (IPv4 и IPv6)
 ip rule del pref 5182 2>/dev/null

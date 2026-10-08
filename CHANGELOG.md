@@ -5,6 +5,29 @@
 
 Все значимые изменения в проекте будут задокументированы в этом файле.
 
+## [3.13.0-beta] - 2026-10-08
+
+### 🎉 Смена механизма: dnsmasq-ipset вместо автообучения (learn-everything)
+
+**Корень проблемы v3.12:** автообучение добавляло в `bypass_nets` ЛЮБОЙ исходящий IP на 80/443/UDP-443 без проверки блокировки, и `restore_learned()` персистил выученное (накопление монотонное) → «обычные» сайты (2ip.ru, yandex) уходили в WARP.
+
+### Изменено (архитектурно)
+- **Автообучение по dmesg/LOG УДАЛЕНО** (учило всё подряд). Вместо него — **dnsmasq-native ipset**: при резолве домена из блок-листа dnsmasq сам кладёт его IP в `bypass_nets` (`ipset=/…/bypass_nets`). Нагрузка ~0 (штатный DNS), точность по домену, стабильность.
+- **Доменный блок-лист:** `itdoginfo/allow-domains` (Russia inside) — ресурсы, блокируемые в РФ (Block/GeoBlock/News/Porn + YouTube/Discord/Meta/Twitter/TikTok). Авто-обновление в `ipset_update.sh` (каждые 6 ч), идемпотентная вставка в `dnsmasq.conf` по маркерам.
+- **Удалены:** LOG-правила `PWB_LEARN`, learning-цикл watchdog, `restore_learned()`, кэш `learned_ips.cache`.
+
+### Исправлено
+- **Источники CIDR (D/E):** битый путь `1andrevich/…/cidr.txt` (404) → `ipsum.lst`; мёртвый `runetfreedom/text/ru-blocked.txt` (только бинарные .dat) → `community.antifilter.download/community.lst`; малый `antifilter subnet.lst` (70) → `allyouneed.lst` (18 261). Итого 12 источников, все — чистый CIDR.
+- **Чистка накопленного (C):** при установке сбрасывается `learned_ips.cache`; `ipset` перестраивается из CIDR (`swap`).
+- **`rollback.sh` / `uninstall.sh`:** корректная очистка блока dnsmasq из конфига; `selftest.sh` теперь проверяет dnsmasq-ipset и загрузку CIDR.
+- **Локальный `selftest.sh`:** встраивается в `/etc/storage` (было: только через curl); README согласован.
+
+### Не берём (осознанно)
+- `antifilter ipresolve.lst` (154 198, per-IP) — тяжёлый для CPU/RAM роутера.
+
+### Изменено
+- Версия: `3.12.0-beta` → `3.13.0-beta`. Рабочая ветка — `feature/phase4-autolearn`.
+
 ## [3.12.0-beta] - 2026-10-08
 
 ### 🎉 Расширенное автообучение: TCP 80/443 + UDP/QUIC 443
