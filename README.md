@@ -26,8 +26,14 @@
 ## 🛠️ Требования
 
 - Роутер с прошивкой **Padavan** (ядро Linux 3.4 или новее).
-- **Настроенный** и **работающий** VPN-клиент **AmneziaWG** с конфигурацией **Cloudflare WARP** (https://warp-generator.github.io/).
+- **Настроенный** и **работающий** VPN-клиент **AmneziaWG или WireGuard** с конфигурацией **Cloudflare WARP** (https://warp-generator.github.io/).
 - Включённый доступ по SSH.
+
+### 🔍 Проверка совместимости перед установкой
+
+Перед установкой системы вы можете быстро проверить, поддерживает ли ваш роутер и прошивка все необходимые компоненты. Для этого выполните одну команду:
+
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/beta/hardware_check.sh | sh
 
 ## 📥 Установка (одной командой)
 
