@@ -71,19 +71,24 @@ else
     fail "маршрут table 51 -> wg0 отсутствует"
 fi
 
-# --- 6. LOG-правила автообучения (v3.12+) ---
-if iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'PWB_LEARN'; then
-    ok "LOG-правила автообучения (PWB_LEARN) присутствуют"
+# --- 6. dnsmasq-ipset (v3.13+: доменный блок-лист → bypass_nets) ---
+if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
+   || grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq.conf 2>/dev/null; then
+    if pidof dnsmasq >/dev/null 2>&1; then
+        ok "dnsmasq-ipset блок настроен и dnsmasq запущен"
+    else
+        warn "dnsmasq-ipset блок есть, но dnsmasq не запущен"
+    fi
 else
-    warn "LOG-правила автообучения (PWB_LEARN) отсутствуют (v3.12?)"
+    fail "dnsmasq-ipset блок не найден (домены → bypass_nets)"
 fi
 
-# --- 7. Автообучение живое? ---
-if [ -f /etc/storage/learned_ips.cache ]; then
-    LEARNED=$(wc -l < /etc/storage/learned_ips.cache 2>/dev/null)
-    ok "learned_ips.cache: $LEARNED записей"
+# --- 7. Источники CIDR загружены? ---
+if [ -f /etc/storage/bypass_nets.cidr ]; then
+    CIDRS=$(wc -l < /etc/storage/bypass_nets.cidr 2>/dev/null)
+    ok "bypass_nets.cidr: $CIDRS подсетей"
 else
-    warn "learned_ips.cache пока не создан (нужен трафик ~1-2 мин)"
+    warn "bypass_nets.cidr пока не создан"
 fi
 
 # --- 8. Cron ---

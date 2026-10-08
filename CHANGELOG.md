@@ -21,6 +21,7 @@
 - **Чистка накопленного (C):** при установке сбрасывается `learned_ips.cache`; `ipset` перестраивается из CIDR (`swap`).
 - **`rollback.sh` / `uninstall.sh`:** корректная очистка блока dnsmasq из конфига; `selftest.sh` теперь проверяет dnsmasq-ipset и загрузку CIDR.
 - **Локальный `selftest.sh`:** встраивается в `/etc/storage` (было: только через curl); README согласован.
+- **Рассинхрон диагностики (rc1 → rc2):** отдельные `selftest.sh`/`diagnostic.sh`/`TESTING.md`/`restore_test.sh` не попали в rc1 (устаревшие ссылки на `PWB_LEARN`/`restore_learned`). Исправлены под dnsmasq-механизм. В `make test` добавлен cross-ref гейт (`consistency`), который валит сборку при устаревших ссылках в продаваемых скриптах.
 
 ### Не берём (осознанно)
 - `antifilter ipresolve.lst` (154 198, per-IP) — тяжёлый для CPU/RAM роутера.

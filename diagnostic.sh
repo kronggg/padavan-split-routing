@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-#  Диагностика системы селективной маршрутизации v3.10+
+#  Диагностика системы селективной маршрутизации v3.13+
 #  Версия для GitHub (исправлена синтаксическая ошибка)
 # =============================================================================
 
@@ -130,12 +130,18 @@ else
     WARNINGS=$((WARNINGS+1))
 fi
 
-# --- Проверка LOG-правил автообучения (Фаза 4) ---
-if iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'PWB_LEARN'; then
-    echo "  [OK] LOG-правила автообучения (PWB_LEARN) присутствуют"
+# --- Проверка dnsmasq-ipset (v3.13: доменный блок-лист → bypass_nets) ---
+if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
+   || grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq.conf 2>/dev/null; then
+    if pidof dnsmasq >/dev/null 2>&1; then
+        echo "  [OK] dnsmasq-ipset блок настроен, dnsmasq запущен"
+    else
+        echo "  [WARN] dnsmasq-ipset блок есть, dnsmasq не запущен"
+        WARNINGS=$((WARNINGS+1))
+    fi
 else
-    echo "  [WARN] LOG-правила автообучения (PWB_LEARN) отсутствуют"
-    WARNINGS=$((WARNINGS+1))
+    echo "  [FAIL] dnsmasq-ipset блок не найден (домены → bypass_nets)"
+    ERRORS=$((ERRORS+1))
 fi
 
 # -----------------------------------------------------------------------------

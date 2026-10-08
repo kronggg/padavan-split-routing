@@ -1,26 +1,27 @@
-# 🧪 Закрытое тестирование v3.12.0-beta (RC1)
+# 🧪 Закрытое тестирование v3.13.0-rc1
 
 > Приватный стенд. Публичный релиз: `kronggg/padavan-warp-bypass`.
 > НЕ распространять содержимое этого репозитория.
 
-**Артефакт:** тег `v3.12.0-rc1` — см. приватный **Releases** этого репозитория.
+**Артефакт:** тег `v3.13.0-rc1` — см. **Releases**.
 **sha256 архива:** указан на странице релиза; сверьте после скачивания.
 
 ---
 
-## 1. Что проверяем (отличия от v3.11)
+## 1. Что проверяем (отличия от v3.11/v3.12)
 
 | Изменение | Зачем |
 |---|---|
-| Явные LOG-правила `PWB_LEARN` (TCP 80,443 + **UDP 443/QUIC**) | Автообучение работает явно, а не зависит от случайных dmesg-строк |
-| Парсинг только своих строк + `sort -u` | Не захватывает чужой трафик, без дублей |
-| Обрезка `learned_ips.cache` (2000) | Кэш не разрастается |
+| **dnsmasq-native ipset**: при DNS-резолве домена из блок-листа dnsmasq сам кладёт его IP в `bypass_nets` (`ipset=/…/bypass_nets`) | В WARP попадают IP **только** доменов блок-листа, а не «всё, к чему обращались» (в этом был баг learn-everything v3.12) |
+| **Автообучение по dmesg/LOG удалено** (`PWB_LEARN`, learning-цикл, `learned_ips.cache`) | Learn-everything гнал в туннель любой посещённый IP (2ip.ru → WARP) |
+| **Починены CIDR-источники** (12): `1andrevich cidr.txt`→`ipsum.lst`; `runetfreedom`→`community.antifilter/community.lst`; `subnet.lst`(70)→`allyouneed.lst`(18261) | Битые/мёртвые URL давали 404 → пустой/узкий список |
 | `selftest.sh` | Однозначная проверка «в строю / не в строю» |
 | `rollback.sh` (встроен в `install.sh`, работает **без сети**) | Возврат к снапшоту без потери связи |
 | Снапшот `/etc/storage/pwb-backup-<ts>` перед установкой | Откат даже при офлайне |
 
-**Главный риск теста:** правило `-m multiport` может не поддержаться ядром конкретной сборки.
-Тогда TCP-обучение тихо не встанет, **UDP-правило останется**. Это и проверяем (шаг B).
+**Главный риск теста (смена философии):** в WARP идут IP доменов блок-листа + широкие CIDR
+(Google/Amazon/Meta/Microsoft), а не «блокируемое по факту». Проверяем, что **обычные**
+ресурсы (2ip.ru, yandex) идут **напрямую**, а блокируемые — через туннель.
 
 ---
 
@@ -29,19 +30,11 @@
 Требования как в README: Padavan, **рабочий** AmneziaWG/WARP, SSH.
 
 ```sh
-# 1) получить RC (на ПК): скачать репозиторий
-#    https://github.com/kronggg/padavan-warp-bypass-testers  -> Code -> Download ZIP
-#    или: git clone https://github.com/kronggg/padavan-warp-bypass-testers.git
-# 2) скопировать на роутер
-scp -r padavan-warp-bypass-testers/* admin@192.168.1.1:/tmp/pwb-rc/
-# 3) войти и установить
-ssh admin@192.168.1.1
-cd /tmp/pwb-rc && sh install.sh
-# 4) применить
-reboot
+# Pinned-тег (без CDN-гонки):
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.13.0-rc1/install.sh | sh
 ```
 
-> ⚠️ Устанавливать можно **поверх v3.11** — `install.sh` сначала делает снапшот.
+> ⚠️ Устанавливать можно **поверх v3.11/v3.12** — `install.sh` сначала делает снапшот.
 
 ---
 
@@ -51,28 +44,32 @@ reboot
 
 ### A. Установка
 - [ ] `install.sh` завершился без ошибок (`=== КОНЕЦ ===`)
+- [ ] В логе есть: `DNSMASQ: доменный блок-лист → bypass_nets` и `dnsmasq: конфиг перечитан (HUP), доменов: N`
 - [ ] Появился снапшот: `ls -dt /etc/storage/pwb-backup-* | head -1`
 - [ ] Файл версии: `cat /etc/storage/VERSION`
 
-### B. Автообучение (ядро теста)
-- [ ] LOG-правила встали: `iptables -t mangle -S PREROUTING | grep PWB_LEARN`
-      *(жду: 2 строки — TCP `--dports 80,443` и UDP `--dport 443`)*
-- [ ] После 1–2 мин трафика: `dmesg | grep -c PWB_LEARN` > 0
-- [ ] Кэш растёт: `wc -l /etc/storage/learned_ips.cache`
-- [ ] Новые адреса в ipset: `ipset list bypass_nets | grep 'Number of entries'`
-- [ ] **КРИТИЧНО (проверка multiport):** `iptables -t mangle -S PREROUTING | grep -c 'dports 80,443'`
-      → если `0`, ядро не поддержало multiport (ожидаемо для части сборок) — **сообщить обязательно**
+### B. dnsmasq-ipset (ядро теста)
+- [ ] Блок в конфиге есть:
+      `grep -c 'ipset=/.*/bypass_nets' /etc/storage/dnsmasq/dnsmasq.conf` *(ожидаем ~1183; путь может быть `/etc/storage/dnsmasq.conf`)*
+- [ ] `pidof dnsmasq` → процесс есть
+- [ ] **E2E:** `nslookup discord.com 127.0.0.1` → взять IP → `ipset test bypass_nets <IP>` → **member**
+- [ ] `ipset list bypass_nets | grep 'Number of entries'` → растёт после DNS-запросов
 
 ### C. Само-проверка
 - [ ] `sh /etc/storage/selftest.sh` → `FAIL=0` и «Система в строю»
 
-### D. Откат (безопасность)
+### D. Ключевая проверка философии (главное!)
+- [ ] В браузере **`2ip.ru`** → показывает **провайдера** (НЕ Cloudflare/WARP)
+- [ ] `ipset test bypass_nets <IP 2ip.ru>` → **NOT** member *(если member — блок-лист слишком широкий, сообщить)*
+- [ ] YouTube/Discord/Telegram → открываются (через туннель)
+
+### E. Откат (безопасность)
 - [ ] `sh /etc/storage/rollback.sh` → восстановил скрипты, **интернет не пропал**
 - [ ] После отката: `sh /etc/storage/selftest.sh` → состояние live (FAIL/WARN по факту)
 
-### E. Устойчивость
+### F. Устойчивость
 - [ ] Перезагрузка: `reboot` → через 60 сек связь есть, `ip link show wg0` OK
-- [ ] YouTube/Discord/Telegram открываются
+- [ ] После ребута блок dnsmasq на месте: `grep -c 'PWB dnsmasq ipset' /etc/storage/dnsmasq/dnsmasq.conf`
 
 ---
 

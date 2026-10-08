@@ -44,7 +44,7 @@ if [ -f "$BKDIR/crontab.admin" ]; then
     }
 fi
 
-# --- Снять LOG-правила автообучения (могли остаться) ---
+# --- v3.13: LOG-правил автообучения больше нет. Defensive-чистка на случай остатка от v3.12 ---
 iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p tcp -m multiport --dports 80,443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
 iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p udp --dport 443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
 
