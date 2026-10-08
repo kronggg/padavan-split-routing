@@ -419,6 +419,7 @@ LEARN_LIMIT="30/min"     # темп LOG — слабый CPU + малый dmesg-
 LEARN_BURST="60"
 LOG_PREFIX="PWB_LEARN"   # свой префикс — парсим ТОЛЬКО свои строки
 LEARNED_MAX=2000         # максимум записей кэша обучения (обрезаем хвост)
+WG0_WAIT_LOGGED=0        # флаг: сообщение 'wg0 не поднят' пишем один раз, без спама
 
 modprobe ipt_LOG 2>/dev/null
 modprobe xt_LOG 2>/dev/null
@@ -434,14 +435,28 @@ while true; do
         echo "[$(date)] Watchdog: удалено not-правило" >> /tmp/route_watchdog.log
     fi
 
-    if ! ip route show table 51 | grep -q "default dev wg0"; then
-        ip route replace default dev wg0 table 51
-        echo "[$(date)] Watchdog: исправлен маршрут в table 51" >> /tmp/route_watchdog.log
-    fi
+    # wg0 может отсутствовать на ранней стадии загрузки — тогда wg0-операции
+    # пропускаем молча (без спама в stderr); при появлении wg0 цикл подхватит.
+    if ! ip link show wg0 >/dev/null 2>&1; then
+        if [ "$WG0_WAIT_LOGGED" != "1" ]; then
+            WG0_WAIT_LOGGED=1
+            echo "[$(date)] Watchdog: wg0 ещё не поднят — маршрут/rp_filter пропущены" >> /tmp/route_watchdog.log
+        fi
+    else
+        WG0_WAIT_LOGGED=0
+        if ! ip route show table 51 | grep -q "default dev wg0"; then
+            ip route replace default dev wg0 table 51 2>/dev/null
+            echo "[$(date)] Watchdog: исправлен маршрут в table 51" >> /tmp/route_watchdog.log
+        fi
 
-    if [ "$(sysctl -n net.ipv4.conf.wg0.rp_filter 2>/dev/null)" != "0" ]; then
-        echo 0 > /proc/sys/net/ipv4/conf/wg0/rp_filter
-        echo "[$(date)] Watchdog: исправлен rp_filter" >> /tmp/route_watchdog.log
+        if [ "$(sysctl -n net.ipv4.conf.wg0.rp_filter 2>/dev/null)" != "0" ]; then
+            # Проверяем путь явно: `echo > несуществующий_путь` печатает ошибку
+            # редиректа ДО 2>/dev/null (шелл раскрывает редирект раньше) — так не шумим.
+            if [ -f /proc/sys/net/ipv4/conf/wg0/rp_filter ]; then
+                echo 0 > /proc/sys/net/ipv4/conf/wg0/rp_filter 2>/dev/null
+                echo "[$(date)] Watchdog: исправлен rp_filter" >> /tmp/route_watchdog.log
+            fi
+        fi
     fi
 
     if ! iptables -t mangle -C PREROUTING -m set --match-set bypass_nets dst -j MARK --set-mark 0xca6c 2>/dev/null; then
