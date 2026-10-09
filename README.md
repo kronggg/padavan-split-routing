@@ -1,6 +1,6 @@
 # 🚀 Селективная маршрутизация через AmneziaWG + WARP на Padavan
 
-![Версия](https://img.shields.io/badge/version-3.13.0-blue)
+![Версия](https://img.shields.io/badge/version-3.14.0--beta-blue)
 ![Платформа](https://img.shields.io/badge/platform-Padavan-orange)
 ![Лицензия](https://img.shields.io/badge/license-MIT-green)
 
@@ -18,7 +18,7 @@
 **Авторы не одобряют и не поощряют использование данного скрипта для
 нарушения законодательства Российской Федерации или любой другой страны.**
 
-## 📌 Что делает система (v3.13)
+## 📌 Что делает система (v3.14)
 
 - Использует **готовые, ежедневно обновляемые CIDR-списки** (подсети) от
   13+ источников (IPv4) и 4 источников (IPv6).
@@ -39,7 +39,7 @@
 
 - Роутер с прошивкой **Padavan** (ядро Linux 3.4 или новее).
 - **Настроенный** и **работающий** VPN-клиент **AmneziaWG или WireGuard** с
-  конфигурацией **Cloudflare WARP** (https://warp-generator.github.io/).
+  конфигурацией **Cloudflare WARP** (https://awgconfig.com).
 - Включённый доступ по SSH.
 
 ### 🔍 Проверка совместимости перед установкой
@@ -48,7 +48,9 @@
 роутер и прошивка все необходимые компоненты. Для этого выполните одну
 команду:
 
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.13.0/hardware_check.sh | sh
+```sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/beta/hardware_check.sh | sh
+```
 
 ## 📥 Установка (одной командой)
 
@@ -56,10 +58,10 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.13.0
 > зафиксированную, проверенную версию, которую нельзя изменить посторонним
 > коммитом.
 
-Текущая версия — **v3.13.0**:
+Текущая версия — **v3.14.0-beta**:
 
 ```sh
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.13.0/install.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/beta/install.sh | sh
 ```
 
 После завершения (2–3 минуты) роутер можно перезагрузить: `reboot`.
@@ -69,7 +71,7 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.13.0
 Полная диагностика (рекомендуется):
 
 ```sh
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.13.0/diagnostic.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/beta/diagnostic.sh | sh
 ```
 
 > 💡 В **v3.12+** для быстрой проверки есть `selftest.sh`. Он устанавливается в
@@ -111,30 +113,38 @@ Cron: каждые 6 часов полное обновление CIDR-спис�
 
 Добавить новый источник:
 
-- sed -i '/^CIDR_SOURCES="/a https://example.com/new_ipv4_list.txt' /etc/storage/ipset_update.sh
-- sh /etc/storage/ipset_update.sh
+```sh
+sed -i '/^CIDR_SOURCES="/a https://example.com/new_ipv4_list.txt' /etc/storage/ipset_update.sh
+sh /etc/storage/ipset_update.sh
+```
 
 Удалить источник:
 
-- sed -i '\|https://example.com/old_ipv4_list.txt|d' /etc/storage/ipset_update.sh
-- sh /etc/storage/ipset_update.sh
+```sh
+sed -i '\|https://example.com/old_ipv4_list.txt|d' /etc/storage/ipset_update.sh
+sh /etc/storage/ipset_update.sh
+```
 
 Для IPv6
 
 Добавить новый источник:
 
-- sed -i '/^CIDR6_SOURCES="/a https://example.com/new_ipv6_list.txt' /etc/storage/ipset_update.sh
-- sh /etc/storage/ipset_update.sh
+```sh
+sed -i '/^CIDR6_SOURCES="/a https://example.com/new_ipv6_list.txt' /etc/storage/ipset_update.sh
+sh /etc/storage/ipset_update.sh
+```
 
 Удалить источник:
 
-- sed -i '\|https://example.com/old_ipv6_list.txt|d' /etc/storage/ipset_update.sh
-- sh /etc/storage/ipset_update.sh
+```sh
+sed -i '\|https://example.com/old_ipv6_list.txt|d' /etc/storage/ipset_update.sh
+sh /etc/storage/ipset_update.sh
+```
 
 ## 🗑 Удаление
 
 ```sh
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.13.0/uninstall.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/beta/uninstall.sh | sh
 ```
 
 После выполнения роутер автоматически перезагрузится и вернётся к стандартной
