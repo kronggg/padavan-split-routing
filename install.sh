@@ -1,7 +1,7 @@
 #!/bin/sh
 # =============================================================================
 #  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
-#  Версия 3.13.0-beta (dnsmasq-ipset: доменный блок-лист вместо автообучения)
+#  Версия 3.13.0-beta (dnsmasq-ipset: доменный список вместо автообучения)
 # =============================================================================
 
 echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.13.0-beta ==="
@@ -72,7 +72,7 @@ https://raw.githubusercontent.com/lord-alfred/ipranges/main/twitter/ipv4_merged.
 https://raw.githubusercontent.com/lord-alfred/ipranges/main/amazon/ipv4_merged.txt
 https://raw.githubusercontent.com/lord-alfred/ipranges/main/microsoft/ipv4_merged.txt
 "
-# --- v3.13: доменный блок-лист для dnsmasq ---
+# --- v3.13: доменный список для dnsmasq ---
 # «Россия inside» = сервисные и медийные домены платформ (YouTube/Discord/Meta/Twitter/TikTok и др.). dnsmasq кладёт их IP в bypass_nets.
 # Формат строк: ipset=/домен/…/set — подменяем имя set на ${IPSET_NAME}.
 DNSMASQ_DOMAINS_URL="https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-dnsmasq-ipset.lst"
@@ -293,13 +293,13 @@ update_ipset6() {
 }
 
 # -----------------------------------------------------------------------------
-# v3.13: dnsmasq — доменный блок-лист → $IPSET_NAME
+# v3.13: dnsmasq — доменный список → $IPSET_NAME
 # dnsmasq сам добавляет IP в ipset при резолве домена (ipset=/…/bypass_nets).
 # Точный only-list: в WARP попадают IP ТОЛЬКО доменов из доменного списка,
 # а не «всё, к чему обращались» (в этом был баг learn-everything v3.12).
 # -----------------------------------------------------------------------------
 setup_dnsmasq() {
-    log "=== DNSMASQ: доменный блок-лист → $IPSET_NAME ==="
+    log "=== DNSMASQ: доменный список → $IPSET_NAME ==="
     local tmp="/tmp/dnsmasq_domains.raw"
     local out="/tmp/dnsmasq_domains.ipset"
     wget -q -O "$tmp" "$DNSMASQ_DOMAINS_URL" 2>/dev/null
@@ -406,9 +406,9 @@ if wait_for_network; then
         update_ipset6
     fi
 
-    # v3.13: настраиваем dnsmasq (доменный блок-лист → $IPSET_NAME).
+    # v3.13: настраиваем dnsmasq (доменный список → $IPSET_NAME).
     # Заменяет автообучение/restore_learned: IP добавляет dnsmasq при
-    # резолве доменов блок-листа, плюс статические CIDR (update_ipset).
+    # резолве доменов из доменного списка, плюс статические CIDR (update_ipset).
     setup_dnsmasq
 else
     log "КРИТИЧЕСКАЯ ОШИБКА: сеть или VPN не готовы, завершаюсь"
@@ -649,7 +649,7 @@ else
     fail "маршрут table 51 -> wg0 отсутствует"
 fi
 
-# --- 6. dnsmasq-ipset (v3.13+: доменный блок-лист → bypass_nets) ---
+# --- 6. dnsmasq-ipset (v3.13+: доменный список → bypass_nets) ---
 if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
    || grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq.conf 2>/dev/null; then
     if pidof dnsmasq >/dev/null 2>&1; then
