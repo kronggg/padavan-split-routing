@@ -39,7 +39,7 @@
 
 - Роутер с прошивкой **Padavan** (ядро Linux 3.4 или новее).
 - **Настроенный** и **работающий** VPN-клиент **AmneziaWG или WireGuard** с
-  конфигурацией **Cloudflare WARP** (https://warp-generator.github.io/).
+  конфигурацией **Cloudflare WARP** (https://awgconfig.com).
 - Включённый доступ по SSH.
 
 ### 🔍 Проверка совместимости перед установкой
@@ -48,7 +48,9 @@
 роутер и прошивка все необходимые компоненты. Для этого выполните одну
 команду:
 
+```sh
 curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.13.0/hardware_check.sh | sh
+```
 
 ## 📥 Установка (одной командой)
 
@@ -111,25 +113,33 @@ Cron: каждые 6 часов полное обновление CIDR-спис�
 
 Добавить новый источник:
 
-- sed -i '/^CIDR_SOURCES="/a https://example.com/new_ipv4_list.txt' /etc/storage/ipset_update.sh
-- sh /etc/storage/ipset_update.sh
+```sh
+sed -i '/^CIDR_SOURCES="/a https://example.com/new_ipv4_list.txt' /etc/storage/ipset_update.sh
+sh /etc/storage/ipset_update.sh
+```
 
 Удалить источник:
 
-- sed -i '\|https://example.com/old_ipv4_list.txt|d' /etc/storage/ipset_update.sh
-- sh /etc/storage/ipset_update.sh
+```sh
+sed -i '\|https://example.com/old_ipv4_list.txt|d' /etc/storage/ipset_update.sh
+sh /etc/storage/ipset_update.sh
+```
 
 Для IPv6
 
 Добавить новый источник:
 
-- sed -i '/^CIDR6_SOURCES="/a https://example.com/new_ipv6_list.txt' /etc/storage/ipset_update.sh
-- sh /etc/storage/ipset_update.sh
+```sh
+sed -i '/^CIDR6_SOURCES="/a https://example.com/new_ipv6_list.txt' /etc/storage/ipset_update.sh
+sh /etc/storage/ipset_update.sh
+```
 
 Удалить источник:
 
-- sed -i '\|https://example.com/old_ipv6_list.txt|d' /etc/storage/ipset_update.sh
-- sh /etc/storage/ipset_update.sh
+```sh
+sed -i '\|https://example.com/old_ipv6_list.txt|d' /etc/storage/ipset_update.sh
+sh /etc/storage/ipset_update.sh
+```
 
 ## 🗑 Удаление
 
