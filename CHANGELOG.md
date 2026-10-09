@@ -19,7 +19,7 @@
 **Корень проблемы v3.12:** автообучение добавляло в `bypass_nets` ЛЮБОЙ исходящий IP на 80/443/UDP-443 без проверки блокировки, и `restore_learned()` персистил выученное (накопление монотонное) → «обычные» сайты (2ip.ru, yandex) уходили в WARP.
 
 ### Изменено (архитектурно)
-- **Автообучение по dmesg/LOG УДАЛЕНО** (учило всё подряд). Вместо него — **dnsmasq-native ipset**: при резолве домена из блок-листа dnsmasq сам кладёт его IP в `bypass_nets` (`ipset=/…/bypass_nets`). Нагрузка ~0 (штатный DNS), точность по домену, стабильность.
+- **Автообучение по dmesg/LOG УДАЛЕНО** (учило всё подряд). Вместо него — **dnsmasq-native ipset**: при резолве домена из доменного списка dnsmasq сам кладёт его IP в `bypass_nets` (`ipset=/…/bypass_nets`). Нагрузка ~0 (штатный DNS), точность по домену, стабильность.
 - **Доменный список:** `itdoginfo/allow-domains` (Russia inside) — сервисные и медийные домены платформ (YouTube/Discord/Meta/Twitter/TikTok и др.). Авто-обновление в `ipset_update.sh` (каждые 6 ч), идемпотентная вставка в `dnsmasq.conf` по маркерам.
 - **Удалены:** LOG-правила `PWB_LEARN`, learning-цикл watchdog, `restore_learned()`, кэш `learned_ips.cache`.
 
