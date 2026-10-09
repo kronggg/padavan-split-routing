@@ -36,7 +36,7 @@ fi
 cat > /etc/storage/ipset_update.sh << 'EOF_SCRIPT'
 #!/bin/sh
 # -----------------------------------------------------------------------------
-# Блокировка повторного запуска
+# Защита от повторного запуска
 # -----------------------------------------------------------------------------
 LOCK_FILE="/tmp/ipset_update.lock"
 if [ -f "$LOCK_FILE" ]; then
@@ -73,8 +73,7 @@ https://raw.githubusercontent.com/lord-alfred/ipranges/main/amazon/ipv4_merged.t
 https://raw.githubusercontent.com/lord-alfred/ipranges/main/microsoft/ipv4_merged.txt
 "
 # --- v3.13: доменный блок-лист для dnsmasq ---
-# «Россия inside» = ресурсы, блокируемые в РФ (Block/GeoBlock/News/Porn +
-# YouTube/Discord/Meta/Twitter/TikTok). dnsmasq кладёт их IP в bypass_nets.
+# «Россия inside» = сервисные и медийные домены платформ (YouTube/Discord/Meta/Twitter/TikTok и др.). dnsmasq кладёт их IP в bypass_nets.
 # Формат строк: ipset=/домен/…/set — подменяем имя set на ${IPSET_NAME}.
 DNSMASQ_DOMAINS_URL="https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-dnsmasq-ipset.lst"
 DNSMASQ_SRC_SET="vpn_domains"   # имя set в исходном файле itdoginfo
@@ -296,7 +295,7 @@ update_ipset6() {
 # -----------------------------------------------------------------------------
 # v3.13: dnsmasq — доменный блок-лист → $IPSET_NAME
 # dnsmasq сам добавляет IP в ipset при резолве домена (ipset=/…/bypass_nets).
-# Точный blocked-only: в WARP попадают IP ТОЛЬКО доменов из блок-листа,
+# Точный only-list: в WARP попадают IP ТОЛЬКО доменов из доменного списка,
 # а не «всё, к чему обращались» (в этом был баг learn-everything v3.12).
 # -----------------------------------------------------------------------------
 setup_dnsmasq() {
@@ -444,7 +443,7 @@ modprobe ip6_set_hash_net 2>/dev/null
 INTERVAL=15
 WG0_WAIT_LOGGED=0        # флаг: сообщение 'wg0 не поднят' пишем один раз, без спама
 
-# --- v3.13: IP попадают в bypass_nets ТОЛЬКО через dnsmasq (доменный блок-лист) ---
+# --- v3.13: IP попадают в bypass_nets ТОЛЬКО через dnsmasq (доменный список) ---
 # или через статические CIDR-источники (см. ipset_update.sh).
 # Автообучение по dmesg/LOG УДАЛЕНО: оно добавляло в WARP любой посещённый IP
 # (learn-everything) — именно это гнало «обычные» сайты в туннель.
@@ -496,7 +495,7 @@ while true; do
     fi
 
     # --- v3.13: LOG-правила автообучения УДАЛЕНЫ (learn-everything) ---
-    # IP → bypass_nets добавляет dnsmasq при резолве доменов из блок-листа
+    # IP → bypass_nets добавляет dnsmasq при резолве доменов из доменного списка
     # (ipset=/…/bypass_nets), плюс статические CIDR. Здесь ничего не логируется.
 
     # Создание ipset6, если его ещё нет
