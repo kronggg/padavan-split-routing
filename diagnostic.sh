@@ -1,12 +1,13 @@
 #!/bin/sh
 # =============================================================================
-#  Диагностика системы селективной маршрутизации v3.13+
-#  Версия для GitHub (исправлена синтаксическая ошибка)
+#  diagnostic.sh — расширенная диагностика системы селективной маршрутизации
+#  Версия 3.13.0 (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
+#  Использование:  sh /etc/storage/diagnostic.sh   (или curl ... | sh)
 # =============================================================================
 
 echo ""
 echo "=============================================="
-echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.10+"
+echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.13.0"
 echo "=============================================="
 echo ""
 
@@ -224,6 +225,52 @@ if grep -q "ip_set_hash_net" /etc/storage/started_script.sh; then
     echo "  [OK] Модуль ip_set_hash_net загружается при старте"
 else
     echo "  [WARN] Модуль ip_set_hash_net НЕ загружается при старте"
+    WARNINGS=$((WARNINGS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# 9. Источники CIDR (доменный список → bypass_nets)
+# -----------------------------------------------------------------------------
+echo "--- 9. Источники CIDR ---"
+if [ -f /etc/storage/bypass_nets.cidr ]; then
+    CIDRS=$(wc -l < /etc/storage/bypass_nets.cidr 2>/dev/null)
+    echo "  [OK] bypass_nets.cidr: ${CIDRS} подсетей"
+    if [ "${CIDRS:-0}" -lt 100 ]; then
+        echo "  [WARN] Подозрительно мало подсетей в bypass_nets.cidr"
+        WARNINGS=$((WARNINGS+1))
+    fi
+else
+    echo "  [WARN] bypass_nets.cidr отсутствует (обновление ещё не выполнялось?)"
+    WARNINGS=$((WARNINGS+1))
+fi
+if [ -f /etc/storage/bypass_nets6.cidr ]; then
+    CIDRS6=$(wc -l < /etc/storage/bypass_nets6.cidr 2>/dev/null)
+    echo "  [OK] bypass_nets6.cidr: ${CIDRS6} подсетей"
+else
+    echo "  [WARN] bypass_nets6.cidr отсутствует (IPv6-список не создан)"
+    WARNINGS=$((WARNINGS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# 10. Планировщик (cron)
+# -----------------------------------------------------------------------------
+echo "--- 10. Планировщик (cron) ---"
+CRON_FILE="/etc/storage/cron/crontabs/admin"
+if [ -f "$CRON_FILE" ]; then
+    if grep -q 'ipset_update.sh' "$CRON_FILE" 2>/dev/null; then
+        echo "  [OK] ipset_update.sh в cron присутствует"
+    else
+        echo "  [WARN] ipset_update.sh в cron отсутствует"
+        WARNINGS=$((WARNINGS+1))
+    fi
+    if grep -q 'route_watchdog.sh' "$CRON_FILE" 2>/dev/null; then
+        echo "  [OK] route_watchdog.sh в cron присутствует"
+    else
+        echo "  [WARN] route_watchdog.sh в cron отсутствует"
+        WARNINGS=$((WARNINGS+1))
+    fi
+else
+    echo "  [WARN] crontab admin отсутствует"
     WARNINGS=$((WARNINGS+1))
 fi
 
