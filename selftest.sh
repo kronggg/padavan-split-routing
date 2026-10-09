@@ -71,7 +71,7 @@ else
     fail "маршрут table 51 -> wg0 отсутствует"
 fi
 
-# --- 6. dnsmasq-ipset (v3.13+: доменный блок-лист → bypass_nets) ---
+# --- 6. dnsmasq-ipset (v3.13+: доменный список → bypass_nets) ---
 if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
    || grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq.conf 2>/dev/null; then
     if pidof dnsmasq >/dev/null 2>&1; then

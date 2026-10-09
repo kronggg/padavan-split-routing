@@ -49,7 +49,7 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-warp-bypass/v3.13.0-b
 
 ### A. Установка
 - [ ] `install.sh` завершился без ошибок (`=== КОНЕЦ ===`)
-- [ ] В логе есть: `DNSMASQ: доменный блок-лист → bypass_nets` и `dnsmasq: конфиг перечитан (HUP), доменов: N`
+- [ ] В логе есть: `DNSMASQ: доменный список → bypass_nets` и `dnsmasq: конфиг перечитан (HUP), доменов: N`
 - [ ] Появился снапшот: `ls -dt /etc/storage/pwb-backup-* | head -1`
 - [ ] Файл версии: `cat /etc/storage/VERSION`
 
