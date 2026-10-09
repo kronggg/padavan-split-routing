@@ -1,10 +1,10 @@
 #!/bin/sh
 # =============================================================================
 #  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
-#  Версия 3.14.0-beta (dnsmasq-ipset: доменный список вместо автообучения)
+#  Версия 3.15.0-beta (dnsmasq-ipset + blocked-only автообучение)
 # =============================================================================
 
-echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.14.0-beta ==="
+echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.15.0-beta ==="
 
 # -----------------------------------------------------------------------------
 # 0. Снапшот текущей установки (для отката через rollback.sh)
@@ -344,7 +344,7 @@ setup_dnsmasq() {
 # -----------------------------------------------------------------------------
 # Главный блок
 # -----------------------------------------------------------------------------
-log "=== СТАРТ v3.14.0-beta ==="
+log "=== СТАРТ v3.15.0-beta ==="
 if wait_for_network; then
     setup_policy_routing
     setup_iptables
@@ -443,10 +443,38 @@ modprobe ip6_set_hash_net 2>/dev/null
 INTERVAL=15
 WG0_WAIT_LOGGED=0        # флаг: сообщение 'wg0 не поднят' пишем один раз, без спама
 
-# --- v3.13: IP попадают в bypass_nets ТОЛЬКО через dnsmasq (доменный список) ---
-# или через статические CIDR-источники (см. ipset_update.sh).
-# Автообучение по dmesg/LOG УДАЛЕНО: оно добавляло в WARP любой посещённый IP
-# (learn-everything) — именно это гнало «обычные» сайты в туннель.
+# --- v3.15: blocked-only автообучение (PWB_PROBE) ---
+# Кандидаты (DST вне bypass_nets, TCP 80/443 / UDP 443) берём из kernel-лога,
+# затем ПРОВЕРЯЕМ прямым соединением; в bypass_nets попадают ТОЛЬКО заблокированные
+# (проба не прошла). Доступные сайты остаются DIRECT — без регресса learn-everything.
+PROBE_TIMEOUT=2
+PROBE_INTERVAL=60
+PROBE_MAX_CYCLE=8
+PROBE_CACHE="/etc/storage/blocked_ips.cache"
+LAST_PROBE=0
+
+# probe_reachable IP PORT -> 0 = доступен (НЕ блокирован), !=0 = блок/недоступен
+# Детектор инструментов обходом PATH: BusyBox `command -v`/`type` ненадёжны
+# (возвращают 0 для отсутствующего бинаря) — поэтому проверяем сами.
+_probe_have() {
+    _oldifs=$IFS; IFS=:
+    for _d in $PATH; do
+        [ -n "$_d" ] || _d=.
+        if [ -x "$_d/$1" ]; then IFS=$_oldifs; return 0; fi
+    done
+    IFS=$_oldifs
+    return 1
+}
+probe_reachable() {
+    if _probe_have nc; then
+        nc -w "$PROBE_TIMEOUT" "$1" "$2" </dev/null >/dev/null 2>&1
+        return $?
+    elif _probe_have wget; then
+        wget --spider -T "$PROBE_TIMEOUT" -t 1 -q "http://$1:$2" >/dev/null 2>&1
+        return $?
+    fi
+    return 0   # нет nc/wget -> fail-safe: считаем доступным, НЕ учим
+}
 
 while true; do
     if ip rule show | grep -q "not.*fwmark 0xca6c"; then
@@ -494,9 +522,47 @@ while true; do
         echo "[$(date)] Watchdog: добавлено правило CONNMARK restore" >> /tmp/route_watchdog.log
     fi
 
-    # --- v3.13: LOG-правила автообучения УДАЛЕНЫ (learn-everything) ---
-    # IP → bypass_nets добавляет dnsmasq при резолве доменов из доменного списка
-    # (ipset=/…/bypass_nets), плюс статические CIDR. Здесь ничего не логируется.
+    # --- v3.15: LOG-правила blocked-only автообучения (PWB_PROBE) ---
+    # Кандидаты: DST вне bypass_nets, TCP 80/443 и UDP 443. Rate-limit против флуда.
+    if ! iptables -t mangle -C PREROUTING -m set ! --match-set bypass_nets dst -p tcp -m multiport --dports 80,443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_PROBE " 2>/dev/null; then
+        iptables -t mangle -A PREROUTING -m set ! --match-set bypass_nets dst -p tcp -m multiport --dports 80,443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_PROBE " 2>/dev/null
+        echo "[$(date)] Watchdog: добавлено LOG-правило PWB_PROBE (tcp)" >> /tmp/route_watchdog.log
+    fi
+    if ! iptables -t mangle -C PREROUTING -m set ! --match-set bypass_nets dst -p udp --dport 443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_PROBE " 2>/dev/null; then
+        iptables -t mangle -A PREROUTING -m set ! --match-set bypass_nets dst -p udp --dport 443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_PROBE " 2>/dev/null
+        echo "[$(date)] Watchdog: добавлено LOG-правило PWB_PROBE (udp)" >> /tmp/route_watchdog.log
+    fi
+
+    # --- v3.15: blocked-only learning (раз в PROBE_INTERVAL) ---
+    NOW=$(date +%s)
+    if [ "$((NOW - LAST_PROBE))" -ge "$PROBE_INTERVAL" ]; then
+        LAST_PROBE=$NOW
+        # восстановление из кэша: update_ipset пересобирает set из CIDR — выученное теряется
+        if [ -f "$PROBE_CACHE" ]; then
+            while read -r r_ip; do
+                [ -n "$r_ip" ] || continue
+                ipset add bypass_nets "$r_ip" -exist 2>/dev/null
+            done < "$PROBE_CACHE"
+        fi
+        # кандидаты из kernel-лога (DST вне bypass_nets)
+        dmesg 2>/dev/null | grep 'PWB_PROBE' | sed -n 's/.*DST=\([0-9.]*\).*DPT=\([0-9]*\).*/\1 \2/p' | sort -u > /tmp/pwb_cand.tmp
+        dmesg -c >/dev/null 2>&1
+        n=0
+        while read -r c_ip c_port; do
+            [ -n "$c_ip" ] || continue
+            [ "$n" -ge "$PROBE_MAX_CYCLE" ] && break
+            ipset test bypass_nets "$c_ip" 2>/dev/null && continue
+            n=$((n+1))
+            if probe_reachable "$c_ip" "$c_port"; then
+                :   # доступен -> DIRECT, не учим
+            else
+                ipset add bypass_nets "$c_ip" -exist 2>/dev/null
+                grep -qxF "$c_ip" "$PROBE_CACHE" 2>/dev/null || echo "$c_ip" >> "$PROBE_CACHE"
+                echo "[$(date)] Watchdog: LEARN (blocked) $c_ip:$c_port" >> /tmp/route_watchdog.log
+            fi
+        done < /tmp/pwb_cand.tmp
+        rm -f /tmp/pwb_cand.tmp
+    fi
 
     # Создание ipset6, если его ещё нет
     if ! ipset list bypass_nets6 >/dev/null 2>&1; then
@@ -661,6 +727,19 @@ else
     fail "dnsmasq-ipset блок не найден (домены → bypass_nets)"
 fi
 
+# --- v3.15: blocked-only автообучение (PWB_PROBE) ---
+if iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'PWB_PROBE'; then
+    ok "LOG-правила PWB_PROBE (blocked-only) присутствуют"
+else
+    warn "LOG-правила PWB_PROBE отсутствуют (автообучение неактивно)"
+fi
+if [ -f /etc/storage/blocked_ips.cache ]; then
+    BLC=$(wc -l < /etc/storage/blocked_ips.cache 2>/dev/null)
+    ok "blocked_ips.cache: $BLC выученных (blocked-only)"
+else
+    warn "blocked_ips.cache пока не создан"
+fi
+
 # --- 7. Источники CIDR загружены? ---
 if [ -f /etc/storage/bypass_nets.cidr ]; then
     CIDRS=$(wc -l < /etc/storage/bypass_nets.cidr 2>/dev/null)
@@ -738,7 +817,7 @@ mtd_storage.sh save
 
 echo ""
 echo "=============================================="
-echo "Установка v3.14.0-beta завершена. Запускаю первый импорт..."
+echo "Установка v3.15.0-beta завершена. Запускаю первый импорт..."
 echo "=============================================="
 
 # Устраняем возможный СТАРЫЙ инстанс watchdog/ipset_update.

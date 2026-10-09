@@ -1,13 +1,13 @@
 #!/bin/sh
 # =============================================================================
 #  diagnostic.sh — расширенная диагностика системы селективной маршрутизации
-#  Версия 3.14.0-beta (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
+#  Версия 3.15.0-beta (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
 #  Использование:  sh /etc/storage/diagnostic.sh   (или curl ... | sh)
 # =============================================================================
 
 echo ""
 echo "=============================================="
-echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.14.0-beta"
+echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.15.0-beta"
 echo "=============================================="
 echo ""
 
@@ -143,6 +143,21 @@ if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/de
 else
     echo "  [FAIL] dnsmasq-ipset блок не найден (домены → bypass_nets)"
     ERRORS=$((ERRORS+1))
+fi
+
+# --- Проверка blocked-only автообучения (v3.15) ---
+if iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'PWB_PROBE'; then
+    echo "  [OK] LOG-правила PWB_PROBE (blocked-only) присутствуют"
+else
+    echo "  [WARN] LOG-правила PWB_PROBE отсутствуют (автообучение неактивно)"
+    WARNINGS=$((WARNINGS+1))
+fi
+if [ -f /etc/storage/blocked_ips.cache ]; then
+    BLC=$(wc -l < /etc/storage/blocked_ips.cache 2>/dev/null)
+    echo "  [OK] blocked_ips.cache: ${BLC} выученных (blocked-only)"
+else
+    echo "  [WARN] blocked_ips.cache отсутствует (ещё не обучались)"
+    WARNINGS=$((WARNINGS+1))
 fi
 
 # -----------------------------------------------------------------------------

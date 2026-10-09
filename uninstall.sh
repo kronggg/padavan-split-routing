@@ -20,6 +20,7 @@ rm -f /etc/storage/started_script.sh
 rm -f /etc/storage/bypass_nets.cidr
 rm -f /etc/storage/bypass_nets6.cidr
 rm -f /etc/storage/learned_ips.cache
+rm -f /etc/storage/blocked_ips.cache
 rm -f /etc/storage/bypass_nets.dump
 rm -f /tmp/ipset_update.lock
 rm -f /tmp/route_watchdog.lock
@@ -48,6 +49,9 @@ ip6tables -t mangle -D PREROUTING -m set --match-set bypass_nets6 dst -j CONNMAR
 # Удаляем LOG-правила автообучения (Фаза 4)
 iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p tcp -m multiport --dports 80,443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
 iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p udp --dport 443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
+# v3.15: снимаем LOG-правила blocked-only автообучения (PWB_PROBE)
+iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p tcp -m multiport --dports 80,443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_PROBE " 2>/dev/null
+iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p udp --dport 443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_PROBE " 2>/dev/null
 
 # Удаляем блок dnsmasq селективности (v3.13)
 DCONF="/etc/storage/dnsmasq/dnsmasq.conf"

@@ -5,6 +5,26 @@
 
 Все значимые изменения в проекте будут задокументированы в этом файле.
 
+## [3.15.0-beta] - 2026-10-09
+
+### 🎯 blocked-only автообучение (безопасное возвращение автообучения)
+- Вернули автообучение в безопасной форме: IP попадает в `bypass_nets` (→ WARP)
+  **только если прямое соединение недоступно (заблокировано)**. Доступные сайты
+  остаются DIRECT — без регресса learn-everything из v3.12.
+- В `route_watchdog.sh`: LOG-правила `PWB_PROBE` (DST вне `bypass_nets`,
+  TCP 80/443 + UDP/QUIC 443, rate-limit 30/min) + цикл обучения раз в 60с:
+  кандидаты из kernel-лога → активная проба (`nc` → `wget` fallback) →
+  `ipset add` только для заблокированных; persist в `/etc/storage/blocked_ips.cache`
+  и восстановление из него после пересборки ipset.
+- `install.sh`: константы `PROBE_TIMEOUT=2`, `PROBE_INTERVAL=60`,
+  `PROBE_MAX_CYCLE=8`, `PROBE_CACHE`. `setup_dnsmasq` не затронут.
+- `uninstall.sh`: снятие LOG-правил `PWB_PROBE`, удаление `blocked_ips.cache`.
+- `diagnostic.sh` / `selftest.sh`: проверки наличия LOG-правил `PWB_PROBE`
+  и размера blocked-only кэша.
+- ⚠️ Ограничение: IP-проба ловит IP-блок/null-route/отказ сети, но **не**
+  SNI/TLS-only блок (при открытом TCP 443). Такие домены требуют domain-probe —
+  запланировано.
+
 ## [3.14.0-beta] - 2026-10-09
 
 ### 🧹 Приведение ветки beta к порядку

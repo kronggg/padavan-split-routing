@@ -83,6 +83,19 @@ else
     fail "dnsmasq-ipset блок не найден (домены → bypass_nets)"
 fi
 
+# --- v3.15: blocked-only автообучение (PWB_PROBE) ---
+if iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'PWB_PROBE'; then
+    ok "LOG-правила PWB_PROBE (blocked-only) присутствуют"
+else
+    warn "LOG-правила PWB_PROBE отсутствуют (автообучение неактивно)"
+fi
+if [ -f /etc/storage/blocked_ips.cache ]; then
+    BLC=$(wc -l < /etc/storage/blocked_ips.cache 2>/dev/null)
+    ok "blocked_ips.cache: $BLC выученных (blocked-only)"
+else
+    warn "blocked_ips.cache пока не создан"
+fi
+
 # --- 7. Источники CIDR загружены? ---
 if [ -f /etc/storage/bypass_nets.cidr ]; then
     CIDRS=$(wc -l < /etc/storage/bypass_nets.cidr 2>/dev/null)
