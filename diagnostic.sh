@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-#  Диагностика системы селективной маршрутизации v3.10+
+#  Диагностика системы селективной маршрутизации v3.13+
 #  Версия для GitHub (исправлена синтаксическая ошибка)
 # =============================================================================
 
@@ -105,11 +105,16 @@ else
     echo "  [WARN] Правило CONNMARK save (IPv4) отсутствует"
     WARNINGS=$((WARNINGS+1))
 fi
-if iptables -t mangle -C PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
+if iptables -t mangle -C PREROUTING ! -i wg0 -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
     echo "  [OK] Правило CONNMARK restore (IPv4) присутствует"
 else
-    echo "  [WARN] Правило CONNMARK restore (IPv4) отсутствует"
-    WARNINGS=$((WARNINGS+1))
+    # fallback: проверяем без ! -i wg0 (старая версия)
+    if iptables -t mangle -C PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
+        echo "  [OK] Правило CONNMARK restore (IPv4) присутствует"
+    else
+        echo "  [WARN] Правило CONNMARK restore (IPv4) отсутствует"
+        WARNINGS=$((WARNINGS+1))
+    fi
 fi
 
 if ip6tables -t mangle -C PREROUTING -m set --match-set bypass_nets6 dst -j MARK --set-mark 0xca6c 2>/dev/null; then
@@ -123,6 +128,20 @@ if ip6tables -t mangle -C PREROUTING -m set --match-set bypass_nets6 dst -j CONN
 else
     echo "  [WARN] Правило CONNMARK save (IPv6) отсутствует"
     WARNINGS=$((WARNINGS+1))
+fi
+
+# --- Проверка dnsmasq-ipset (v3.13: доменный список → bypass_nets) ---
+if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
+   || grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq.conf 2>/dev/null; then
+    if pidof dnsmasq >/dev/null 2>&1; then
+        echo "  [OK] dnsmasq-ipset блок настроен, dnsmasq запущен"
+    else
+        echo "  [WARN] dnsmasq-ipset блок есть, dnsmasq не запущен"
+        WARNINGS=$((WARNINGS+1))
+    fi
+else
+    echo "  [FAIL] dnsmasq-ipset блок не найден (домены → bypass_nets)"
+    ERRORS=$((ERRORS+1))
 fi
 
 # -----------------------------------------------------------------------------
