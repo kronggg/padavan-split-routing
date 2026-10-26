@@ -104,7 +104,7 @@ dnsmasq: при DNS-резолве добавляет IP доменов из д�
 
 Cron: каждые 6 часов полное обновление CIDR-списков и доменного списка.
 
-## 🌐 Свои домены через веб-страницу
+## 🌐 Добавление своих доменов через веб-страницу
 
 Встроенный список покрывает популярные сервисы. Если нужного сайта в нём нет —
 добавьте его сами, прямо в браузере, без SSH.
@@ -141,46 +141,6 @@ sh /etc/storage/bypass_domains.sh status
 > она не открывается — проверьте `sh /etc/storage/pwb_web_setup.sh status`:
 > слот разворачивается при загрузке автоматически, но если boot-хук не сработал,
 > достаточно выполнить `sh /etc/storage/pwb_web_setup.sh stage`.
-
-## ⚠️ Известные ограничения
-
-Некоторые сервисы могут работать нестабильно через туннель или требовать
-дополнительной настройки. Часть ресурсов может быть недоступна через WARP
-независимо от настроек.
-
-## 🔧 Ручное добавление/удаление источников CIDR
-
-Для IPv4
-
-Добавить новый источник:
-
-```sh
-sed -i '/^CIDR_SOURCES="/a https://example.com/new_ipv4_list.txt' /etc/storage/ipset_update.sh
-sh /etc/storage/ipset_update.sh
-```
-
-Удалить источник:
-
-```sh
-sed -i '\|https://example.com/old_ipv4_list.txt|d' /etc/storage/ipset_update.sh
-sh /etc/storage/ipset_update.sh
-```
-
-Для IPv6
-
-Добавить новый источник:
-
-```sh
-sed -i '/^CIDR6_SOURCES="/a https://example.com/new_ipv6_list.txt' /etc/storage/ipset_update.sh
-sh /etc/storage/ipset_update.sh
-```
-
-Удалить источник:
-
-```sh
-sed -i '\|https://example.com/old_ipv6_list.txt|d' /etc/storage/ipset_update.sh
-sh /etc/storage/ipset_update.sh
-```
 
 ## 🗑 Удаление
 
