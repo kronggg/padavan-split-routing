@@ -61,7 +61,7 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/beta/ha
 > зафиксированную, проверенную версию, которую нельзя изменить посторонним
 > коммитом.
 
-Текущая версия — **v3.16.2-beta**:
+Текущая версия — **v3.16.3-beta**:
 
 ```sh
 curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/beta/install.sh | sh
