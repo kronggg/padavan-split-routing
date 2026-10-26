@@ -1,10 +1,10 @@
 #!/bin/sh
 # =============================================================================
 #  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
-#  Версия 3.16.1-beta (dnsmasq-ipset + blocked-only автообучение)
+#  Версия 3.16.2-beta (dnsmasq-ipset + blocked-only автообучение)
 # =============================================================================
 
-echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.16.1-beta ==="
+echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.16.2-beta ==="
 
 # -----------------------------------------------------------------------------
 # 0. Снапшот текущей установки (для отката через rollback.sh)
@@ -380,7 +380,7 @@ setup_dnsmasq() {
 # -----------------------------------------------------------------------------
 # Главный блок
 # -----------------------------------------------------------------------------
-log "=== СТАРТ v3.16.1-beta ==="
+log "=== СТАРТ v3.16.2-beta ==="
 if wait_for_network; then
     setup_policy_routing
     setup_iptables
@@ -895,13 +895,13 @@ cat > /etc/storage/diagnostic.sh << 'EOF_DIAG'
 #!/bin/sh
 # =============================================================================
 #  diagnostic.sh — расширенная диагностика системы селективной маршрутизации
-#  Версия 3.16.1-beta (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
+#  Версия 3.16.2-beta (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
 #  Использование:  sh /etc/storage/diagnostic.sh   (или curl ... | sh)
 # =============================================================================
 
 echo ""
 echo "=============================================="
-echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.16.1-beta"
+echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.16.2-beta"
 echo "=============================================="
 echo ""
 
@@ -1289,7 +1289,7 @@ cat > /etc/storage/bypass_domains.sh << 'EOF_BYPASSD'
 # =============================================================================
 #  bypass_domains.sh — менеджер личных доменов, направляемых в туннель
 #  Проект: padavan-split-routing
-#  Версия 3.16.1-beta
+#  Версия 3.16.2-beta
 # -----------------------------------------------------------------------------
 #  Зачем: у пользователя есть сайт, которого нет ни в одном общем списке.
 #  Он вводит домен в веб-странице — и домен уходит в туннель, переживая
@@ -1600,7 +1600,8 @@ pre{margin:8px 0 0;background:#0f1b28;color:#cfe3f5;padding:10px;border-radius:7
 </div>
 
 <script>
-/* Команды выполняются штатным механизмом прошивки — тем же, что у страницы
+/* v3.16.2
+   Команды выполняются штатным механизмом прошивки — тем же, что у страницы
    «Консоль»: POST /apply.cgi с action_mode=' SystemCmd ', вывод — из
    /console_response.asp. Права те же, что у WebUI (нужен вход в веб-интерфейс). */
 var SCRIPT = '/etc/storage/bypass_domains.sh';
@@ -1628,7 +1629,12 @@ function run(args){
       headers:{'Content-Type':'application/x-www-form-urlencoded'},
       body: body
     })
-    .then(function(){ return fetch('/console_response.asp', {credentials:'same-origin'}); })
+    .then(function(){
+      // v3.16.2: console_response.asp нельзя брать из кэша — иначе после
+      // удаления рисуется устаревший список, хотя на роутере он уже пуст.
+      return fetch('/console_response.asp?_t=' + Date.now(),
+                   {credentials:'same-origin', cache:'no-store'});
+    })
     .then(function(r){ return r.text(); });
 }
 
@@ -1656,7 +1662,10 @@ function parseStatus(out){
   return o;
 }
 
+var current = [];
+
 function render(domains){
+  current = domains.slice();
   var ul = $('list');
   ul.innerHTML = '';
   if(!domains.length){
@@ -1728,6 +1737,9 @@ function delDomain(d){
     .then(function(out){
       setLog(out);
       if(/^ERR:/m.test(out)) throw new Error(out.split('\n')[0].replace(/^ERR:\s*/,''));
+      // v3.16.2: убираем из DOM сразу — интерфейс не должен ждать/зависеть от кэша
+      var left = current.filter(function(x){ return x !== d; });
+      render(left);
       setMsg('Удалён: ' + d + ' — сайт снова идёт напрямую.','ok');
       return reload();
     })
@@ -1759,7 +1771,7 @@ cat > /etc/storage/pwb_web_setup.sh << 'EOF_PWBWEB'
 #!/bin/sh
 # =============================================================================
 #  pwb_web_setup.sh — разворачивает страницу «Домены в туннель» в WebUI
-#  Версия 3.16.1-beta
+#  Версия 3.16.2-beta
 # -----------------------------------------------------------------------------
 #  /www — read-only squashfs, но прошивка уже содержит симлинк
 #  /www/custom -> /opt/share/www/custom. /opt пуст и тоже read-only, однако
@@ -1919,7 +1931,7 @@ mtd_storage.sh save
 
 echo ""
 echo "=============================================="
-echo "Установка v3.16.1-beta завершена. Запускаю первый импорт..."
+echo "Установка v3.16.2-beta завершена. Запускаю первый импорт..."
 echo "=============================================="
 
 # Устраняем возможный СТАРЫЙ инстанс watchdog/ipset_update.

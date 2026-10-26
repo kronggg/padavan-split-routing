@@ -94,7 +94,8 @@ pre{margin:8px 0 0;background:#0f1b28;color:#cfe3f5;padding:10px;border-radius:7
 </div>
 
 <script>
-/* Команды выполняются штатным механизмом прошивки — тем же, что у страницы
+/* v3.16.2
+   Команды выполняются штатным механизмом прошивки — тем же, что у страницы
    «Консоль»: POST /apply.cgi с action_mode=' SystemCmd ', вывод — из
    /console_response.asp. Права те же, что у WebUI (нужен вход в веб-интерфейс). */
 var SCRIPT = '/etc/storage/bypass_domains.sh';
@@ -122,7 +123,12 @@ function run(args){
       headers:{'Content-Type':'application/x-www-form-urlencoded'},
       body: body
     })
-    .then(function(){ return fetch('/console_response.asp', {credentials:'same-origin'}); })
+    .then(function(){
+      // v3.16.2: console_response.asp нельзя брать из кэша — иначе после
+      // удаления рисуется устаревший список, хотя на роутере он уже пуст.
+      return fetch('/console_response.asp?_t=' + Date.now(),
+                   {credentials:'same-origin', cache:'no-store'});
+    })
     .then(function(r){ return r.text(); });
 }
 
@@ -150,7 +156,10 @@ function parseStatus(out){
   return o;
 }
 
+var current = [];
+
 function render(domains){
+  current = domains.slice();
   var ul = $('list');
   ul.innerHTML = '';
   if(!domains.length){
@@ -222,6 +231,9 @@ function delDomain(d){
     .then(function(out){
       setLog(out);
       if(/^ERR:/m.test(out)) throw new Error(out.split('\n')[0].replace(/^ERR:\s*/,''));
+      // v3.16.2: убираем из DOM сразу — интерфейс не должен ждать/зависеть от кэша
+      var left = current.filter(function(x){ return x !== d; });
+      render(left);
       setMsg('Удалён: ' + d + ' — сайт снова идёт напрямую.','ok');
       return reload();
     })
