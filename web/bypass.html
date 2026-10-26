@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="-1">
+<title>Bypass-домены</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#eef1f5;color:#1f2d3d;
+     font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+.wrap{max-width:720px;margin:0 auto;padding:14px}
+header{background:#25384d;color:#fff;border-radius:10px 10px 0 0;padding:14px 18px}
+header h1{margin:0;font-size:17px;font-weight:600}
+header p{margin:5px 0 0;font-size:12.5px;color:#b7c5d6}
+.body{background:#fff;border:1px solid #d6dde7;border-top:0;border-radius:0 0 10px 10px;padding:16px}
+.box{border:1px solid #d6dde7;border-radius:8px;padding:14px;margin-bottom:14px;background:#fbfcfe}
+.desc{font-size:13px;color:#65788d;margin:0 0 12px}
+.row{display:flex;gap:8px}
+input[type=text]{flex:1;min-width:0;padding:11px 12px;border:1px solid #cfd8e3;
+     border-radius:7px;font-size:15px;font-family:inherit}
+button{cursor:pointer;border:0;border-radius:7px;padding:11px 16px;font-size:14px;
+     font-weight:600;background:#2b6cb0;color:#fff;font-family:inherit}
+button:disabled{opacity:.5;cursor:default}
+button.ghost{background:transparent;color:#2b6cb0;border:1px solid #cfd8e3;
+     font-weight:500;padding:7px 12px}
+button.wide{width:100%;background:#25384d}
+button.del{background:transparent;color:#c62828;border:1px solid #f0c4c4;
+     padding:6px 12px;font-weight:600}
+.msg{font-size:13px;margin-top:10px;min-height:19px}
+.msg.ok{color:#2e7d32}.msg.err{color:#c62828}.msg.w{color:#65788d}
+.listhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-weight:600}
+ul.list{list-style:none;margin:0;padding:0}
+li.item{display:flex;justify-content:space-between;align-items:center;gap:8px;
+     padding:9px 4px;border-top:1px solid #e3e9f0}
+li.item:first-child{border-top:0}
+li.item code{font-size:14px;word-break:break-all}
+.empty{color:#65788d;font-size:13px;padding:6px 2px}
+.meta{font-size:12px;color:#65788d;margin-top:10px}
+details{margin-top:6px}
+summary{cursor:pointer;color:#65788d;font-size:13px}
+pre{margin:8px 0 0;background:#0f1b28;color:#cfe3f5;padding:10px;border-radius:7px;
+     font:12px/1.4 Consolas,monospace;white-space:pre-wrap;word-break:break-all;
+     max-height:220px;overflow:auto}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid #cfd8e3;
+     border-top-color:#2b6cb0;border-radius:50%;animation:sp .7s linear infinite;
+     vertical-align:-2px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Домены в туннель</h1>
+    <p>Сайты из этого списка пойдут через туннель — и по IPv4, и по IPv6.
+       Остальной трафик идёт напрямую. Список переживает перезагрузку.</p>
+  </header>
+  <div class="body">
+
+    <div class="box">
+      <p class="desc">Добавьте сайт, который не открывается напрямую
+        (например <code>example.com</code>).</p>
+      <div class="row">
+        <input id="dom" type="text" placeholder="example.com" autocomplete="off"
+               autocapitalize="off" autocorrect="off" spellcheck="false"
+               onkeydown="if(event.key==='Enter')addDomain()">
+        <button id="addBtn" onclick="addDomain()">Добавить</button>
+      </div>
+      <div id="msg" class="msg"></div>
+    </div>
+
+    <div class="box">
+      <div class="listhead">
+        <span>Список</span>
+        <button class="ghost" id="refBtn" onclick="refresh()">Обновить</button>
+      </div>
+      <ul id="list" class="list"><li class="empty">загрузка…</li></ul>
+      <div class="meta" id="meta"></div>
+    </div>
+
+    <div class="box">
+      <button class="wide" id="applyBtn" onclick="applyAll()">Применить заново</button>
+      <p class="desc" style="margin:10px 0 0">Обычно не нужно: добавление и удаление
+        применяются сразу.</p>
+    </div>
+
+    <details>
+      <summary>Журнал последней операции</summary>
+      <pre id="log">—</pre>
+    </details>
+
+  </div>
+</div>
+
+<script>
+/* Команды выполняются штатным механизмом прошивки — тем же, что у страницы
+   «Консоль»: POST /apply.cgi с action_mode=' SystemCmd ', вывод — из
+   /console_response.asp. Права те же, что у WebUI (нужен вход в веб-интерфейс). */
+var SCRIPT = '/etc/storage/bypass_domains.sh';
+var busy = false;
+
+function $(id){ return document.getElementById(id); }
+function setMsg(t, cls){ var m=$('msg'); m.className='msg '+(cls||''); m.innerHTML=t; }
+function setLog(t){ $('log').textContent = t || '—'; }
+
+/* Проверка для быстрой обратной связи. Настоящая валидация — в скрипте
+   на роутере: JS не является защитой, его легко обойти. */
+function looksLikeDomain(d){
+  return d.length >= 3 && d.length <= 253 &&
+         /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])$/.test(d) &&
+         d.indexOf('..') === -1 && d.indexOf('.') > 0;
+}
+
+function run(args){
+  var body = 'action_mode=' + encodeURIComponent(' SystemCmd ')
+           + '&current_page=' + encodeURIComponent('console_response.asp')
+           + '&next_page=' + encodeURIComponent('console_response.asp')
+           + '&SystemCmd=' + encodeURIComponent('sh ' + SCRIPT + ' ' + args);
+  return fetch('/apply.cgi', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body: body
+    })
+    .then(function(){ return fetch('/console_response.asp', {credentials:'same-origin'}); })
+    .then(function(r){ return r.text(); });
+}
+
+function lock(on){
+  busy = on;
+  $('addBtn').disabled = on;
+  $('applyBtn').disabled = on;
+  $('refBtn').disabled = on;
+}
+
+function parseList(out){
+  return out.split(/\r?\n/)
+    .map(function(s){ return s.trim(); })
+    .filter(function(s){
+      return /^[a-z0-9]([a-z0-9.-]*[a-z0-9])$/.test(s) && s.indexOf('.') > 0;
+    });
+}
+
+function parseStatus(out){
+  var o = {};
+  out.split(/\r?\n/).forEach(function(line){
+    var m = line.match(/^([a-z0-9_]+)=(.*)$/);
+    if(m) o[m[1]] = m[2].trim();
+  });
+  return o;
+}
+
+function render(domains){
+  var ul = $('list');
+  ul.innerHTML = '';
+  if(!domains.length){
+    ul.innerHTML = '<li class="empty">Список пуст</li>';
+    return;
+  }
+  domains.forEach(function(d){
+    var li = document.createElement('li'); li.className = 'item';
+    var c = document.createElement('code'); c.textContent = d;
+    var b = document.createElement('button');
+    b.className = 'del'; b.textContent = 'Удалить';
+    b.onclick = function(){ delDomain(d); };
+    li.appendChild(c); li.appendChild(b);
+    ul.appendChild(li);
+  });
+}
+
+function showMeta(st){
+  var parts = [];
+  if(st.set4 !== undefined) parts.push('IPv4-набор: ' + st.set4);
+  if(st.set6 !== undefined) parts.push('IPv6-набор: ' + st.set6);
+  if(st.dnsmasq) parts.push(st.dnsmasq === 'running' ? 'dnsmasq работает' : 'dnsmasq остановлен');
+  $('meta').textContent = parts.join(' · ');
+}
+
+function reload(){
+  return run('list').then(function(out){
+    setLog(out); render(parseList(out));
+    return run('status').then(function(st){
+      showMeta(parseStatus(st));
+      return st;
+    });
+  });
+}
+
+function refresh(){
+  if(busy) return;
+  lock(true); setMsg('<span class="spin"></span>обновление…','w');
+  reload()
+    .then(function(){ setMsg('',''); })
+    .catch(function(e){ setMsg('Ошибка связи: ' + e, 'err'); })
+    .then(function(){ lock(false); });
+}
+
+function addDomain(){
+  if(busy) return;
+  var inp = $('dom');
+  var d = (inp.value || '').trim().toLowerCase()
+            .replace(/^https?:\/\//,'').replace(/\/.*$/,'').replace(/\.$/,'');
+  if(!looksLikeDomain(d)){ setMsg('Некорректный домен. Пример: example.com','err'); return; }
+
+  lock(true); setMsg('<span class="spin"></span>добавляю ' + d + '…','w');
+  run('add ' + d)
+    .then(function(out){
+      setLog(out);
+      if(/^ERR:/m.test(out)) throw new Error(out.split('\n')[0].replace(/^ERR:\s*/,''));
+      inp.value = '';
+      setMsg('Готово: ' + d + '. Проверьте сайт через 10–20 секунд.','ok');
+      return reload();
+    })
+    .catch(function(e){ setMsg('Не удалось: ' + e, 'err'); })
+    .then(function(){ lock(false); });
+}
+
+function delDomain(d){
+  if(busy) return;
+  lock(true); setMsg('<span class="spin"></span>удаляю ' + d + '…','w');
+  run('del ' + d)
+    .then(function(out){
+      setLog(out);
+      if(/^ERR:/m.test(out)) throw new Error(out.split('\n')[0].replace(/^ERR:\s*/,''));
+      setMsg('Удалён: ' + d + ' — сайт снова идёт напрямую.','ok');
+      return reload();
+    })
+    .catch(function(e){ setMsg('Не удалось: ' + e, 'err'); })
+    .then(function(){ lock(false); });
+}
+
+function applyAll(){
+  if(busy) return;
+  lock(true); setMsg('<span class="spin"></span>применяю…','w');
+  run('apply')
+    .then(function(out){
+      setLog(out);
+      if(/^ERR:/m.test(out)) throw new Error(out.split('\n')[0].replace(/^ERR:\s*/,''));
+      setMsg('Список применён.','ok');
+      return reload();
+    })
+    .catch(function(e){ setMsg('Не удалось: ' + e, 'err'); })
+    .then(function(){ lock(false); });
+}
+
+document.addEventListener('DOMContentLoaded', refresh);
+</script>
+</body>
+</html>

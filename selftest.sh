@@ -166,6 +166,28 @@ if [ -f /etc/storage/cron/crontabs/admin ]; then
     fi
 fi
 
+# --- 9. Менеджер доменов и веб-страница (v3.16) ---
+if [ -x /etc/storage/bypass_domains.sh ]; then
+    ok "bypass_domains.sh на месте и исполняем"
+else
+    fail "bypass_domains.sh отсутствует"
+fi
+if [ -f /etc/storage/pwb-web/bypass.html ]; then
+    ok "веб-страница (мастер-копия) на месте"
+else
+    warn "веб-страница не установлена"
+fi
+if [ -f /opt/share/www/custom/index.html ]; then
+    ok "страница развёрнута в слот /custom"
+else
+    warn "страница не развёрнута в /opt (выполните pwb_web_setup.sh stage)"
+fi
+if grep -qF '# >>> PWB web stage >>>' /etc/storage/started_script.sh 2>/dev/null; then
+    ok "boot-хук страницы прописан (переживёт перезагрузку)"
+else
+    warn "boot-хук страницы отсутствует — после reboot слот опустеет"
+fi
+
 echo "=============================================="
 echo "   ИТОГ: FAIL=$FAIL  WARN=$WARN"
 echo "=============================================="

@@ -16,6 +16,26 @@ rm -f /etc/storage/route_watchdog.sh
 rm -f /etc/storage/diagnostic.sh
 rm -f /etc/storage/started_script.sh
 
+# v3.16: менеджер доменов и веб-страница
+[ -x /etc/storage/pwb_web_setup.sh ] && /etc/storage/pwb_web_setup.sh unstage >/dev/null 2>&1
+rm -f /etc/storage/bypass_domains.sh
+rm -f /etc/storage/pwb_web_setup.sh
+rm -f /etc/storage/bypass_domains.lst
+find /etc/storage/pwb-web -depth -delete 2>/dev/null
+# снимаем блок доменов из dnsmasq и применяем (полный рестарт, не HUP)
+DCONF="/etc/storage/dnsmasq/dnsmasq.conf"
+if [ -f "$DCONF" ]; then
+    sed -i '\|^# >>> PWB bypass domains >>>$|,\|^# <<< PWB bypass domains <<<$|d' "$DCONF" 2>/dev/null
+    if pidof dnsmasq >/dev/null 2>&1; then
+        killall dnsmasq 2>/dev/null
+        _i=0
+        while [ -n "$(pidof dnsmasq 2>/dev/null)" ] && [ "$_i" -lt 10 ]; do
+            sleep 1; _i=$((_i + 1))
+        done
+        dnsmasq 2>/dev/null
+    fi
+fi
+
 # Удаляем CIDR-файлы и кэши
 rm -f /etc/storage/bypass_nets.cidr
 rm -f /etc/storage/bypass_nets6.cidr

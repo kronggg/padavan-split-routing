@@ -1,13 +1,13 @@
 #!/bin/sh
 # =============================================================================
 #  diagnostic.sh — расширенная диагностика системы селективной маршрутизации
-#  Версия 3.15.4-beta (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
+#  Версия 3.16.0-beta (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
 #  Использование:  sh /etc/storage/diagnostic.sh   (или curl ... | sh)
 # =============================================================================
 
 echo ""
 echo "=============================================="
-echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.15.4-beta"
+echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.16.0-beta"
 echo "=============================================="
 echo ""
 
@@ -315,6 +315,43 @@ if [ -f "$CRON_FILE" ]; then
     fi
 else
     echo "  [WARN] crontab admin отсутствует"
+    WARNINGS=$((WARNINGS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# 11. Менеджер доменов и веб-страница (v3.16)
+# -----------------------------------------------------------------------------
+echo "--- 11. Домены пользователя и страница ---"
+if [ -x /etc/storage/bypass_domains.sh ]; then
+    echo "  [OK] bypass_domains.sh на месте"
+    _dc=$(grep -vcE '^[[:space:]]*(#|$)' /etc/storage/bypass_domains.lst 2>/dev/null)
+    [ -z "$_dc" ] && _dc=0
+    echo "  [OK] личных доменов в списке: $_dc"
+else
+    echo "  [WARN] bypass_domains.sh отсутствует"
+    WARNINGS=$((WARNINGS+1))
+fi
+if [ -f /etc/storage/pwb-web/bypass.html ]; then
+    echo "  [OK] страница: мастер-копия на месте"
+else
+    echo "  [WARN] страница не установлена"
+    WARNINGS=$((WARNINGS+1))
+fi
+if grep -q ' /opt ' /proc/mounts 2>/dev/null; then
+    if [ -f /opt/share/www/custom/index.html ]; then
+        echo "  [OK] страница развёрнута: http://<router>/custom/index.html"
+    else
+        echo "  [WARN] /opt смонтирован, но страница не развёрнута"
+        WARNINGS=$((WARNINGS+1))
+    fi
+else
+    echo "  [WARN] /opt не смонтирован — слот /custom недоступен"
+    WARNINGS=$((WARNINGS+1))
+fi
+if grep -qF '# >>> PWB web stage >>>' /etc/storage/started_script.sh 2>/dev/null; then
+    echo "  [OK] boot-хук страницы прописан"
+else
+    echo "  [WARN] boot-хук страницы отсутствует — после reboot слот опустеет"
     WARNINGS=$((WARNINGS+1))
 fi
 

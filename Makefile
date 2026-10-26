@@ -6,7 +6,7 @@
 SHELL := /bin/sh
 SCRIPTS := install.sh uninstall.sh diagnostic.sh selftest.sh rollback.sh hardware_check.sh
 
-.PHONY: all test syntax embedded hup-clean ipv6 version-sync version
+.PHONY: all test syntax embedded hup-clean ipv6 sync version-sync version
 
 all: test
 
@@ -53,6 +53,10 @@ ipv6:
 	@sh ./scripts/check-heredoc-vars.sh || exit 1
 	@echo "  [OK] переменные определены внутри встроенных копий"
 
+sync:
+	@echo "=== regression: heredoc copies match standalone files ==="
+	@sh ./scripts/check-heredoc-sync.sh || exit 1
+
 version-sync:
 	@echo "=== [4/5] version consistency ==="
 	@v=$$(cat VERSION 2>/dev/null | tr -d '[:space:]'); \
@@ -67,7 +71,7 @@ version-sync:
 
 version: version-sync
 
-test: syntax embedded hup-clean ipv6 version-sync
+test: syntax embedded hup-clean ipv6 sync version-sync
 	@echo ""
 	@echo "=== [5/5] structural checks ==="
 	@grep -q '# >>> PWB dnsmasq ipset >>>' install.sh || { echo "  [FAIL] нет открывающего маркера"; exit 1; }
