@@ -4,9 +4,9 @@
 # make version   — сверка версий
 
 SHELL := /bin/sh
-SCRIPTS := install.sh uninstall.sh diagnostic.sh selftest.sh rollback.sh hardware_check.sh
+SCRIPTS := install.sh uninstall.sh diagnostic.sh selftest.sh rollback.sh hardware_check.sh bypass_domains.sh pwb_web_setup.sh
 
-.PHONY: all test syntax embedded hup-clean ipv6 sync version-sync version
+.PHONY: all test syntax embedded hup-clean ipv6 webstage sync version-sync version
 
 all: test
 
@@ -53,6 +53,20 @@ ipv6:
 	@sh ./scripts/check-heredoc-vars.sh || exit 1
 	@echo "  [OK] переменные определены внутри встроенных копий"
 
+webstage:
+	@echo "=== regression: web page staged at install time ==="
+	@grep -q 'pwb_web_setup.sh stage' install.sh || { echo "  [FAIL] install.sh не вызывает stage — страница останется пустой"; exit 1; }
+	@echo "  [OK] stage вызывается при установке"
+	@if [ -f pwb_web_setup.sh ]; then \
+	    a=$$(grep -n 'chmod +x /etc/storage/started_script.sh' install.sh | cut -d: -f1); \
+	    b=$$(grep -n '^    /etc/storage/pwb_web_setup.sh stage' install.sh | cut -d: -f1); \
+	    if [ -z "$$a" ] || [ -z "$$b" ]; then echo "  [FAIL] не найдены якоря порядка"; exit 1; fi; \
+	    if [ "$$b" -lt "$$a" ]; then echo "  [FAIL] stage вызывается ДО создания started_script.sh (boot-хук некуда писать)"; exit 1; fi; \
+	    echo "  [OK] порядок верный: stage после started_script ($$b > $$a)"; \
+	fi
+	@grep -q "grep -q ' /opt ' /proc/mounts" install.sh || { echo "  [FAIL] нет проверки монтирования /opt"; exit 1; }
+	@echo "  [OK] проверка монтирования /opt присутствует"
+
 sync:
 	@echo "=== regression: heredoc copies match standalone files ==="
 	@sh ./scripts/check-heredoc-sync.sh || exit 1
@@ -71,7 +85,7 @@ version-sync:
 
 version: version-sync
 
-test: syntax embedded hup-clean ipv6 sync version-sync
+test: syntax embedded hup-clean ipv6 webstage sync version-sync
 	@echo ""
 	@echo "=== [5/5] structural checks ==="
 	@grep -q '# >>> PWB dnsmasq ipset >>>' install.sh || { echo "  [FAIL] нет открывающего маркера"; exit 1; }

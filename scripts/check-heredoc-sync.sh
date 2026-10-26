@@ -27,5 +27,6 @@ check_sync "selftest.sh"      "cat > /etc/storage/selftest.sh"        "EOF_SELFT
 check_sync "diagnostic.sh"    "cat > /etc/storage/diagnostic.sh"      "EOF_DIAG"        "diagnostic.sh"      || fail=1
 check_sync "bypass_domains.sh" "cat > /etc/storage/bypass_domains.sh" "EOF_BYPASSD"     "bypass_domains.sh"  || fail=1
 check_sync "web/bypass.html"  "cat > /etc/storage/pwb-web/bypass.html" "EOF_BYPASSHTML" "web/bypass.html"   || fail=1
+check_sync "pwb_web_setup.sh" "cat > /etc/storage/pwb_web_setup.sh" "EOF_PWBWEB" "pwb_web_setup.sh" || fail=1
 
 exit $fail
