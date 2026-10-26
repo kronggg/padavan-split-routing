@@ -72,10 +72,33 @@ else
 fi
 
 # --- 6. dnsmasq-ipset (v3.13+: доменный список → bypass_nets) ---
-if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
-   || grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq.conf 2>/dev/null; then
+if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null; then
     if pidof dnsmasq >/dev/null 2>&1; then
-        ok "dnsmasq-ipset блок настроен и dnsmasq запущен"
+        # v3.15.1: проверяем ЭФФЕКТ (резолв → ipset), а не только наличие строки
+        # busybox nslookup печатает 'Address: 1.2.3.4' = 2 поля — берём $2.
+        # Перебираем до 5 доменов: первый в списке может быть не-FQDN ('.ua').
+        _check=0
+        _doms=$(sed -n '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</p' \
+                /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
+                | grep '^ipset=/' | sed 's|^ipset=/||; s|/[^/]*$||' | tr '/' '\n' \
+                | grep -E '^[a-z0-9]([a-z0-9.-]*[a-z0-9])$' | head -5)
+        for _d in $_doms; do
+            _ips=$(nslookup "$_d" 127.0.0.1 2>/dev/null \
+                   | awk '/^Address/ { ip=$2; if (ip ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && ip != "127.0.0.1") print ip }')
+            [ -n "$_ips" ] || continue
+            _ip=$(echo "$_ips" | head -1)
+            if ipset test bypass_nets "$_ip" 2>&1 | grep -q 'is in set'; then
+                ok "dnsmasq-ipset РАБОТАЕТ ($_d → $_ip в bypass_nets)"
+                _check=2
+                break
+            fi
+            fail "dnsmasq-ipset не применяется: $_d резолвится в $_ip, но его нет в bypass_nets"
+            _check=2
+            break
+        done
+        if [ "$_check" = "0" ]; then
+            warn "dnsmasq-ipset: проверить не удалось (домены не резолвятся) — не ошибка"
+        fi
     else
         warn "dnsmasq-ipset блок есть, но dnsmasq не запущен"
     fi

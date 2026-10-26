@@ -1,6 +1,6 @@
 # 🚀 Селективная маршрутизация через AmneziaWG + WARP на Padavan
 
-![Версия](https://img.shields.io/badge/version-3.15.0--beta-blue)
+![Версия](https://img.shields.io/badge/version-3.15.1--beta-blue)
 ![Платформа](https://img.shields.io/badge/platform-Padavan-orange)
 ![Лицензия](https://img.shields.io/badge/license-MIT-green)
 
@@ -61,7 +61,7 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/beta/ha
 > зафиксированную, проверенную версию, которую нельзя изменить посторонним
 > коммитом.
 
-Текущая версия — **v3.15.0-beta**:
+Текущая версия — **v3.15.1-beta**:
 
 ```sh
 curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/beta/install.sh | sh

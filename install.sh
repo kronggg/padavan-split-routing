@@ -1,10 +1,10 @@
 #!/bin/sh
 # =============================================================================
 #  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
-#  Версия 3.15.0-beta (dnsmasq-ipset + blocked-only автообучение)
+#  Версия 3.15.1-beta (dnsmasq-ipset + blocked-only автообучение)
 # =============================================================================
 
-echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.15.0-beta ==="
+echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.15.1-beta ==="
 
 # -----------------------------------------------------------------------------
 # 0. Снапшот текущей установки (для отката через rollback.sh)
@@ -318,9 +318,15 @@ setup_dnsmasq() {
         return 1
     fi
     local conf="$DNSMASQ_CONF"
+    # v3.15.1: канонический путь. Корневой /etc/storage/dnsmasq.conf НЕ включён
+    # через conf-file в /etc/dnsmasq.conf → dnsmasq его не читает, писать туда нельзя.
     if [ ! -d "$(dirname "$conf")" ]; then
-        conf="/etc/storage/dnsmasq.conf"
-        log "WARN: $DNSMASQ_CONF недоступен — использую $conf"
+        mkdir -p "$(dirname "$conf")" 2>/dev/null
+    fi
+    if [ ! -w "$(dirname "$conf")" ]; then
+        log "ОШИБКА: каталог $(dirname "$conf") недоступен для записи — dnsmasq не настраиваю"
+        rm -f "$tmp" "$out"
+        return 1
     fi
     if [ -f "$conf" ]; then
         sed -i '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</d' "$conf" 2>/dev/null
@@ -332,9 +338,32 @@ setup_dnsmasq() {
         echo "# <<< PWB dnsmasq ipset <<<"
     } >> "$conf"
     rm -f "$tmp" "$out"
+    # v3.15.1: SIGHUP НЕ перечитывает конфиг dnsmasq (только /etc/hosts + кэш).
+    # Для применения ipset=/address= нужен ПОЛНЫЙ рестарт демона.
     if pidof dnsmasq >/dev/null 2>&1; then
-        killall -HUP dnsmasq 2>/dev/null
-        log "dnsmasq: конфиг перечитан (HUP), доменов: $n"
+        killall dnsmasq 2>/dev/null
+        _i=0
+        while [ -n "$(pidof dnsmasq 2>/dev/null)" ] && [ "$_i" -lt 10 ]; do
+            sleep 1; _i=$((_i + 1))
+        done
+        # Защита от ложного успеха: если старый процесс не умер, новый экземпляр
+        # не стартует, но pidof покажет СТАРЫЙ pid — лог соврёт «применён».
+        if [ -n "$(pidof dnsmasq 2>/dev/null)" ]; then
+            log "ОШИБКА: dnsmasq не остановился за 10 с — конфиг НЕ применён"
+            return 1
+        fi
+        dnsmasq 2>/dev/null
+        _i=0
+        while [ -z "$(pidof dnsmasq 2>/dev/null)" ] && [ "$_i" -lt 10 ]; do
+            sleep 1; _i=$((_i + 1))
+        done
+        if pidof dnsmasq >/dev/null 2>&1; then
+            sleep 1
+            log "dnsmasq: перезапущен (конфиг применён), доменов: $n"
+        else
+            log "ОШИБКА: dnsmasq не поднялся — конфиг записан, но НЕ применён"
+            return 1
+        fi
     else
         log "dnsmasq: не запущен — конфиг записан, применится при старте (доменов: $n)"
     fi
@@ -344,7 +373,7 @@ setup_dnsmasq() {
 # -----------------------------------------------------------------------------
 # Главный блок
 # -----------------------------------------------------------------------------
-log "=== СТАРТ v3.15.0-beta ==="
+log "=== СТАРТ v3.15.1-beta ==="
 if wait_for_network; then
     setup_policy_routing
     setup_iptables
@@ -625,11 +654,20 @@ fi
 iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p tcp -m multiport --dports 80,443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
 iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p udp --dport 443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
 # v3.13: убираем блок dnsmasq селективности из конфига
+# v3.15.1: только канонический путь (корневой dnsmasq не читает)
 DCONF="/etc/storage/dnsmasq/dnsmasq.conf"
-[ -f "$DCONF" ] || DCONF="/etc/storage/dnsmasq.conf"
 if [ -f "$DCONF" ]; then
     sed -i '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</d' "$DCONF" 2>/dev/null
-    pidof dnsmasq >/dev/null 2>&1 && killall -HUP dnsmasq 2>/dev/null
+    # v3.15.1: HUP не применяет изменения — нужен полный рестарт
+    if pidof dnsmasq >/dev/null 2>&1; then
+        killall dnsmasq 2>/dev/null
+        _i=0
+        while [ -n "$(pidof dnsmasq 2>/dev/null)" ] && [ "$_i" -lt 10 ]; do
+            sleep 1; _i=$((_i + 1))
+        done
+        dnsmasq 2>/dev/null
+        sleep 2
+    fi
 fi
 mtd_storage.sh save >/dev/null 2>&1
 [ -x /etc/storage/route_watchdog.sh ] && /etc/storage/route_watchdog.sh & echo "  [OK] watchdog перезапущен"
@@ -716,10 +754,34 @@ else
 fi
 
 # --- 6. dnsmasq-ipset (v3.13+: доменный список → bypass_nets) ---
-if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
-   || grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq.conf 2>/dev/null; then
+if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null; then
     if pidof dnsmasq >/dev/null 2>&1; then
-        ok "dnsmasq-ipset блок настроен и dnsmasq запущен"
+        # v3.15.1: проверяем ЭФФЕКТ (резолв → ipset), а не только наличие строки.
+        # Парсер: busybox nslookup печатает 'Address: 1.2.3.4' = 2 поля, поэтому
+        # берём $2 (не $3), только IPv4, исключая серверную строку.
+        # Перебираем до 5 доменов: первый в списке can быть не-FQDN ('.ua').
+        _check=0
+        _doms=$(sed -n '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</p' \
+                /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
+                | grep '^ipset=/' | sed 's|^ipset=/||; s|/[^/]*$||' | tr '/' '\n' \
+                | grep -E '^[a-z0-9]([a-z0-9.-]*[a-z0-9])$' | head -5)
+        for _d in $_doms; do
+            _ips=$(nslookup "$_d" 127.0.0.1 2>/dev/null \
+                   | awk '/^Address/ { ip=$2; if (ip ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && ip != "127.0.0.1") print ip }')
+            [ -n "$_ips" ] || continue
+            _ip=$(echo "$_ips" | head -1)
+            if ipset test bypass_nets "$_ip" 2>&1 | grep -q 'is in set'; then
+                ok "dnsmasq-ipset РАБОТАЕТ ($_d → $_ip в bypass_nets)"
+                _check=2
+                break
+            fi
+            fail "dnsmasq-ipset не применяется: $_d резолвится в $_ip, но его нет в bypass_nets"
+            _check=2
+            break
+        done
+        if [ "$_check" = "0" ]; then
+            warn "dnsmasq-ipset: проверить не удалось (домены не резолвятся) — не ошибка"
+        fi
     else
         warn "dnsmasq-ipset блок есть, но dnsmasq не запущен"
     fi
@@ -817,7 +879,7 @@ mtd_storage.sh save
 
 echo ""
 echo "=============================================="
-echo "Установка v3.15.0-beta завершена. Запускаю первый импорт..."
+echo "Установка v3.15.1-beta завершена. Запускаю первый импорт..."
 echo "=============================================="
 
 # Устраняем возможный СТАРЫЙ инстанс watchdog/ipset_update.

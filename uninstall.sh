@@ -54,11 +54,20 @@ iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p tcp -m 
 iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p udp --dport 443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_PROBE " 2>/dev/null
 
 # Удаляем блок dnsmasq селективности (v3.13)
+# v3.15.1: только канонический путь (корневой dnsmasq не читает)
 DCONF="/etc/storage/dnsmasq/dnsmasq.conf"
-[ -f "$DCONF" ] || DCONF="/etc/storage/dnsmasq.conf"
 if [ -f "$DCONF" ]; then
     sed -i '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</d' "$DCONF" 2>/dev/null
-    pidof dnsmasq >/dev/null 2>&1 && killall -HUP dnsmasq 2>/dev/null
+    # v3.15.1: SIGHUP не применяет конфиг — нужен полный рестарт
+    if pidof dnsmasq >/dev/null 2>&1; then
+        killall dnsmasq 2>/dev/null
+        _i=0
+        while [ -n "$(pidof dnsmasq 2>/dev/null)" ] && [ "$_i" -lt 10 ]; do
+            sleep 1; _i=$((_i + 1))
+        done
+        dnsmasq 2>/dev/null
+        sleep 2
+    fi
 fi
 
 # Удаляем policy routing (IPv4 и IPv6)
