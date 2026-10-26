@@ -1,10 +1,10 @@
 #!/bin/sh
 # =============================================================================
 #  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
-#  Версия 3.15.2-beta (dnsmasq-ipset + blocked-only автообучение)
+#  Версия 3.15.3-beta (dnsmasq-ipset + blocked-only автообучение)
 # =============================================================================
 
-echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.15.2-beta ==="
+echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.15.3-beta ==="
 
 # -----------------------------------------------------------------------------
 # 0. Снапшот текущей установки (для отката через rollback.sh)
@@ -186,8 +186,7 @@ setup_iptables() {
     log "Правила iptables для $IPSET_NAME добавлены"
 	
     # IPv6
-    modprobe ip6_set 2>/dev/null
-    modprobe ip6_set_hash_net 2>/dev/null
+    # v3.15.3: модуля ip6_set_hash_net не существует — IPv6-наборы обслуживает ip_set_hash_net
     if ! ipset list "$IPSET6_NAME" >/dev/null 2>&1; then
         ipset create "$IPSET6_NAME" hash:net family inet6 maxelem 50000 2>/dev/null
     fi
@@ -309,7 +308,9 @@ setup_dnsmasq() {
         return 1
     fi
     # Преобразуем имя set: …/vpn_domains → …/bypass_nets; берём только ipset=-строки
-    grep '^ipset=/' "$tmp" | sed "s|/${DNSMASQ_SRC_SET}\$|/${IPSET_NAME}|" > "$out"
+    # v3.15.3: двойной набор — IPv4 идёт в bypass_nets, IPv6 (AAAA) в bypass_nets6.
+    # dnsmasq раскладывает адреса по семействам сам; один набор IPv6 не примет.
+    grep '^ipset=/' "$tmp" | sed "s|/${DNSMASQ_SRC_SET}\$|/${IPSET_NAME},${IPSET6_NAME}|" > "$out"
     local n=$(grep -c '^ipset=/' "$out" 2>/dev/null)
     [ -z "$n" ] && n=0
     if [ "$n" -lt 10 ]; then
@@ -328,6 +329,12 @@ setup_dnsmasq() {
         rm -f "$tmp" "$out"
         return 1
     fi
+    # v3.15.3: оба набора должны существовать ДО рестарта, иначе dnsmasq
+    # не сможет записать в них адреса и молча потеряет часть резолвов.
+    ipset list "$IPSET_NAME" >/dev/null 2>&1 || \
+        ipset create "$IPSET_NAME" hash:net maxelem 100000 2>/dev/null
+    ipset list "$IPSET6_NAME" >/dev/null 2>&1 || \
+        ipset create "$IPSET6_NAME" hash:net family inet6 maxelem 50000 2>/dev/null
     if [ -f "$conf" ]; then
         sed -i '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</d' "$conf" 2>/dev/null
     fi
@@ -373,7 +380,7 @@ setup_dnsmasq() {
 # -----------------------------------------------------------------------------
 # Главный блок
 # -----------------------------------------------------------------------------
-log "=== СТАРТ v3.15.2-beta ==="
+log "=== СТАРТ v3.15.3-beta ==="
 if wait_for_network; then
     setup_policy_routing
     setup_iptables
@@ -411,7 +418,7 @@ if wait_for_network; then
     if [ -f /etc/storage/bypass_nets6.cidr ]; then
         cidr6_count=$(wc -l < /etc/storage/bypass_nets6.cidr 2>/dev/null)
         if [ "$cidr6_count" -gt 0 ]; then
-            modprobe ip6_set_hash_net 2>/dev/null
+            # v3.15.3: ip6_set_hash_net не существует
             log "Быстрое восстановление ipset6 из CIDR-списка ($cidr6_count подсетей)..."
             {
                 echo "create $IPSET6_TMP hash:net family inet6 maxelem 50000"
@@ -466,8 +473,7 @@ trap 'rm -f "$LOCK_FILE"' EXIT
 
 modprobe ip_set_hash_net 2>/dev/null
 modprobe xt_set 2>/dev/null
-modprobe ip6_set 2>/dev/null
-modprobe ip6_set_hash_net 2>/dev/null
+# v3.15.3: ip6_set_hash_net не существует — IPv6-наборы обслуживает ip_set_hash_net
 
 INTERVAL=15
 WG0_WAIT_LOGGED=0        # флаг: сообщение 'wg0 не поднят' пишем один раз, без спама
@@ -595,7 +601,7 @@ while true; do
 
     # Создание ipset6, если его ещё нет
     if ! ipset list bypass_nets6 >/dev/null 2>&1; then
-        modprobe ip6_set_hash_net 2>/dev/null
+        # v3.15.3: ip6_set_hash_net не существует
         ipset create bypass_nets6 hash:net family inet6 maxelem 50000 2>/dev/null
         echo "[$(date)] Watchdog: создан ipset6 bypass_nets6" >> /tmp/route_watchdog.log
     fi
@@ -837,13 +843,13 @@ chmod +x /etc/storage/selftest.sh
 cat > /etc/storage/diagnostic.sh << 'EOF_DIAG'
 # =============================================================================
 #  diagnostic.sh — расширенная диагностика системы селективной маршрутизации
-#  Версия 3.15.2-beta (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
+#  Версия 3.15.3-beta (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
 #  Использование:  sh /etc/storage/diagnostic.sh   (или curl ... | sh)
 # =============================================================================
 
 echo ""
 echo "=============================================="
-echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.15.2-beta"
+echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.15.3-beta"
 echo "=============================================="
 echo ""
 
@@ -862,13 +868,15 @@ else
     ERRORS=$((ERRORS+1))
 fi
 
-if lsmod | grep -q ip6_set_hash_net; then
-    echo "  [OK] ip6_set_hash_net загружен"
+# v3.15.3: модуля ip6_set_hash_net не существует — IPv6-наборы обслуживает
+# ip_set_hash_net (семейство задаётся при создании набора: family inet6).
+# Проверяем не имя модуля, а фактическую способность создать IPv6-набор.
+if ipset list "$IPSET6_NAME" >/dev/null 2>&1; then
+    _v6n=$(ipset list "$IPSET6_NAME" 2>/dev/null | grep -oE 'Number of entries: [0-9]+' | awk '{print $4}')
+    echo "  [OK] IPv6-набор $IPSET6_NAME работает (записей: ${_v6n:-0})"
 else
-    echo "  [WARN] ip6_set_hash_net НЕ загружен (IPv6 не будет работать)"
-    RECOMMENDATIONS="${RECOMMENDATIONS}
-  - IPv6: Убедитесь, что провайдер поддерживает IPv6. В веб-интерфейсе роутера (WAN → Протокол IPv6) установите 'Тип подключения' = 'Native DHCPv6'. В разделе 'Настройки IPv6 для LAN' включите 'Получать IPv6-адрес LAN через DHCPv6 IA-PD'. Если провайдер не поддерживает IPv6, предупреждение можно игнорировать."
-    WARNINGS=$((WARNINGS+1))
+    echo "  [FAIL] IPv6-набор $IPSET6_NAME отсутствует — IPv6-адреса не пойдут в туннель"
+    ERRORS=$((ERRORS+1))
 fi
 if lsmod | grep -q xt_set; then
     echo "  [OK] xt_set загружен"
@@ -1004,6 +1012,40 @@ if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/de
 else
     echo "  [FAIL] dnsmasq-ipset блок не найден (домены → bypass_nets)"
     ERRORS=$((ERRORS+1))
+fi
+
+# --- v3.15.3: IPv6-путь (AAAA → bypass_nets6) ---
+if grep -q '^ipset=/' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null; then
+    if ! grep '^ipset=/' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null | grep -q ',bypass_nets6'; then
+        echo "  [FAIL] IPv6: в конфиге только IPv4-набор — AAAA уходят мимо туннеля"
+        ERRORS=$((ERRORS+1))
+    elif ! ipset list bypass_nets6 >/dev/null 2>&1; then
+        echo "  [FAIL] IPv6: набор bypass_nets6 отсутствует"
+        ERRORS=$((ERRORS+1))
+    else
+        _chk6=0
+        _d6=$(sed -n '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</p' \
+              /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
+              | grep '^ipset=/' | sed 's|^ipset=/||; s|/[^/]*$||' | tr '/' '\n' \
+              | grep -E '^[a-z0-9]([a-z0-9.-]*[a-z0-9])$' | head -5)
+        for _dom in $_d6; do
+            _a6=$(nslookup "$_dom" 127.0.0.1 2>/dev/null \
+                  | awk -F': ' '/^Address/ { split($2,a," "); if (a[1] ~ /:/ && a[1] != "::1" && a[1] != "127.0.0.1") print a[1] }' | head -1)
+            [ -n "$_a6" ] || continue
+            _chk6=1
+            if ipset test bypass_nets6 "$_a6" 2>&1 | grep -q 'is in set'; then
+                echo "  [OK] IPv6-обход РАБОТАЕТ ($_dom → $_a6 в bypass_nets6)"
+            else
+                echo "  [FAIL] IPv6-обход не применяется: $_dom → $_a6 нет в bypass_nets6"
+                ERRORS=$((ERRORS+1))
+            fi
+            break
+        done
+        if [ "$_chk6" = "0" ]; then
+            echo "  [WARN] IPv6: у доменов списка нет AAAA-записей — проверить не удалось"
+            WARNINGS=$((WARNINGS+1))
+        fi
+    fi
 fi
 
 # --- Проверка blocked-only автообучения (v3.15) ---
@@ -1196,7 +1238,7 @@ crond
 
 modprobe ip_set_hash_net
 modprobe xt_set
-modprobe ip6_set_hash_net
+# v3.15.3: ip6_set_hash_net не существует
 
 ( sleep 60 && sh /etc/storage/ipset_update.sh ) &
 ( sleep 90 && /etc/storage/route_watchdog.sh & ) &
@@ -1230,7 +1272,7 @@ mtd_storage.sh save
 
 echo ""
 echo "=============================================="
-echo "Установка v3.15.2-beta завершена. Запускаю первый импорт..."
+echo "Установка v3.15.3-beta завершена. Запускаю первый импорт..."
 echo "=============================================="
 
 # Устраняем возможный СТАРЫЙ инстанс watchdog/ipset_update.

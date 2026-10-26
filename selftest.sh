@@ -106,6 +106,36 @@ else
     fail "dnsmasq-ipset блок не найден (домены → bypass_nets)"
 fi
 
+# --- v3.15.3: IPv6-путь (AAAA → bypass_nets6) ---
+if grep -q '^ipset=/' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null; then
+    if ! grep '^ipset=/' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null | grep -q ',bypass_nets6'; then
+        fail "IPv6: в конфиге указан только IPv4-набор — AAAA-адреса уходят мимо туннеля"
+    elif ! ipset list bypass_nets6 >/dev/null 2>&1; then
+        fail "IPv6: набор bypass_nets6 отсутствует"
+    else
+        _chk6=0
+        _d6=$(sed -n '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</p' \
+              /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
+              | grep '^ipset=/' | sed 's|^ipset=/||; s|/[^/]*$||' | tr '/' '\n' \
+              | grep -E '^[a-z0-9]([a-z0-9.-]*[a-z0-9])$' | head -5)
+        for _dom in $_d6; do
+            _a6=$(nslookup "$_dom" 127.0.0.1 2>/dev/null \
+                  | awk -F': ' '/^Address/ { split($2,a," "); if (a[1] ~ /:/ && a[1] != "::1" && a[1] != "127.0.0.1") print a[1] }' | head -1)
+            [ -n "$_a6" ] || continue
+            _chk6=1
+            if ipset test bypass_nets6 "$_a6" 2>&1 | grep -q 'is in set'; then
+                ok "IPv6-обход РАБОТАЕТ ($_dom → $_a6 в bypass_nets6)"
+            else
+                fail "IPv6-обход не применяется: $_dom резолвится в $_a6, но его нет в bypass_nets6"
+            fi
+            break
+        done
+        if [ "$_chk6" = "0" ]; then
+            warn "IPv6: у доменов списка нет AAAA-записей — проверить не удалось"
+        fi
+    fi
+fi
+
 # --- v3.15: blocked-only автообучение (PWB_PROBE) ---
 if iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'PWB_PROBE'; then
     ok "LOG-правила PWB_PROBE (blocked-only) присутствуют"

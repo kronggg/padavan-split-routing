@@ -6,7 +6,7 @@
 SHELL := /bin/sh
 SCRIPTS := install.sh uninstall.sh diagnostic.sh selftest.sh rollback.sh hardware_check.sh
 
-.PHONY: all test syntax embedded hup-clean version-sync version
+.PHONY: all test syntax embedded hup-clean ipv6 version-sync version
 
 all: test
 
@@ -40,6 +40,17 @@ hup-clean:
 	    echo "  [FAIL] найден killall -HUP dnsmasq — конфиг НЕ применится"; exit 1; \
 	else echo "  [OK] HUP для dnsmasq отсутствует"; fi
 
+ipv6:
+	@echo "=== regression: IPv6 (dual set) ==="
+	@grep -q 'IPSET_NAME},\$${IPSET6_NAME}' install.sh || { echo "  [FAIL] генерация ipset= без второго набора"; exit 1; }
+	@echo "  [OK] генерация использует два набора"
+	@if grep -v '^[[:space:]]*#' install.sh diagnostic.sh 2>/dev/null | grep -q 'ip6_set_hash_net'; then echo "  [FAIL] используется несуществующий модуль ip6_set_hash_net"; exit 1; fi
+	@echo "  [OK] несуществующий модуль не используется"
+	@grep -q 'ensure\|ipset list "\$$IPSET6_NAME" >/dev/null' install.sh || { echo "  [FAIL] нет гарантии существования наборов"; exit 1; }
+	@echo "  [OK] наборы создаются до рестарта"
+	@if grep -q 'можно игнорировать' install.sh diagnostic.sh 2>/dev/null; then echo "  [FAIL] остался текст 'можно игнорировать'"; exit 1; fi
+	@echo "  [OK] ложного совета нет"
+
 version-sync:
 	@echo "=== [4/5] version consistency ==="
 	@v=$$(cat VERSION 2>/dev/null | tr -d '[:space:]'); \
@@ -54,7 +65,7 @@ version-sync:
 
 version: version-sync
 
-test: syntax embedded hup-clean version-sync
+test: syntax embedded hup-clean ipv6 version-sync
 	@echo ""
 	@echo "=== [5/5] structural checks ==="
 	@grep -q '# >>> PWB dnsmasq ipset >>>' install.sh || { echo "  [FAIL] нет открывающего маркера"; exit 1; }

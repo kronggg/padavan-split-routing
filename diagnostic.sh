@@ -1,16 +1,18 @@
 #!/bin/sh
 # =============================================================================
 #  diagnostic.sh — расширенная диагностика системы селективной маршрутизации
-#  Версия 3.15.2-beta (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
+#  Версия 3.15.3-beta (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
 #  Использование:  sh /etc/storage/diagnostic.sh   (или curl ... | sh)
 # =============================================================================
 
 echo ""
 echo "=============================================="
-echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.15.2-beta"
+echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.15.3-beta"
 echo "=============================================="
 echo ""
 
+IPSET_NAME="bypass_nets"
+IPSET6_NAME="bypass_nets6"
 ERRORS=0
 WARNINGS=0
 RECOMMENDATIONS=""
@@ -26,13 +28,15 @@ else
     ERRORS=$((ERRORS+1))
 fi
 
-if lsmod | grep -q ip6_set_hash_net; then
-    echo "  [OK] ip6_set_hash_net загружен"
+# v3.15.3: модуля ip6_set_hash_net не существует — IPv6-наборы обслуживает
+# ip_set_hash_net (семейство задаётся при создании набора: family inet6).
+# Проверяем не имя модуля, а фактическую способность создать IPv6-набор.
+if ipset list "$IPSET6_NAME" >/dev/null 2>&1; then
+    _v6n=$(ipset list "$IPSET6_NAME" 2>/dev/null | grep -oE 'Number of entries: [0-9]+' | awk '{print $4}')
+    echo "  [OK] IPv6-набор $IPSET6_NAME работает (записей: ${_v6n:-0})"
 else
-    echo "  [WARN] ip6_set_hash_net НЕ загружен (IPv6 не будет работать)"
-    RECOMMENDATIONS="${RECOMMENDATIONS}
-  - IPv6: Убедитесь, что провайдер поддерживает IPv6. В веб-интерфейсе роутера (WAN → Протокол IPv6) установите 'Тип подключения' = 'Native DHCPv6'. В разделе 'Настройки IPv6 для LAN' включите 'Получать IPv6-адрес LAN через DHCPv6 IA-PD'. Если провайдер не поддерживает IPv6, предупреждение можно игнорировать."
-    WARNINGS=$((WARNINGS+1))
+    echo "  [FAIL] IPv6-набор $IPSET6_NAME отсутствует — IPv6-адреса не пойдут в туннель"
+    ERRORS=$((ERRORS+1))
 fi
 if lsmod | grep -q xt_set; then
     echo "  [OK] xt_set загружен"
