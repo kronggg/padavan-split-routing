@@ -84,7 +84,7 @@ if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/de
                 | grep -E '^[a-z0-9]([a-z0-9.-]*[a-z0-9])$' | head -5)
         for _d in $_doms; do
             _ips=$(nslookup "$_d" 127.0.0.1 2>/dev/null \
-                   | awk '/^Address/ { ip=$2; if (ip ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && ip != "127.0.0.1") print ip }')
+                   | awk -F': ' '/^Address/ { split($2,a," "); if (a[1] ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && a[1] != "127.0.0.1") print a[1] }')
             [ -n "$_ips" ] || continue
             _ip=$(echo "$_ips" | head -1)
             if ipset test bypass_nets "$_ip" 2>&1 | grep -q 'is in set'; then

@@ -1,10 +1,10 @@
 #!/bin/sh
 # =============================================================================
 #  Установщик системы селективной маршрутизации через AmneziaWG/WARP для Padavan
-#  Версия 3.15.1-beta (dnsmasq-ipset + blocked-only автообучение)
+#  Версия 3.15.2-beta (dnsmasq-ipset + blocked-only автообучение)
 # =============================================================================
 
-echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.15.1-beta ==="
+echo "=== Установка системы селективной маршрутизации (AmneziaWG + WARP) v3.15.2-beta ==="
 
 # -----------------------------------------------------------------------------
 # 0. Снапшот текущей установки (для отката через rollback.sh)
@@ -373,7 +373,7 @@ setup_dnsmasq() {
 # -----------------------------------------------------------------------------
 # Главный блок
 # -----------------------------------------------------------------------------
-log "=== СТАРТ v3.15.1-beta ==="
+log "=== СТАРТ v3.15.2-beta ==="
 if wait_for_network; then
     setup_policy_routing
     setup_iptables
@@ -767,7 +767,7 @@ if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/de
                 | grep -E '^[a-z0-9]([a-z0-9.-]*[a-z0-9])$' | head -5)
         for _d in $_doms; do
             _ips=$(nslookup "$_d" 127.0.0.1 2>/dev/null \
-                   | awk '/^Address/ { ip=$2; if (ip ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && ip != "127.0.0.1") print ip }')
+                   | awk -F': ' '/^Address/ { split($2,a," "); if (a[1] ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && a[1] != "127.0.0.1") print a[1] }')
             [ -n "$_ips" ] || continue
             _ip=$(echo "$_ips" | head -1)
             if ipset test bypass_nets "$_ip" 2>&1 | grep -q 'is in set'; then
@@ -832,6 +832,357 @@ EOF_SELFTEST
 chmod +x /etc/storage/selftest.sh
 
 # -----------------------------------------------------------------------------
+# 2d. diagnostic.sh — расширенная диагностика (встроен, доступен offline)
+# -----------------------------------------------------------------------------
+cat > /etc/storage/diagnostic.sh << 'EOF_DIAG'
+# =============================================================================
+#  diagnostic.sh — расширенная диагностика системы селективной маршрутизации
+#  Версия 3.15.2-beta (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
+#  Использование:  sh /etc/storage/diagnostic.sh   (или curl ... | sh)
+# =============================================================================
+
+echo ""
+echo "=============================================="
+echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.15.2-beta"
+echo "=============================================="
+echo ""
+
+ERRORS=0
+WARNINGS=0
+RECOMMENDATIONS=""
+
+# -----------------------------------------------------------------------------
+# 1. Модули ядра
+# -----------------------------------------------------------------------------
+echo "--- 1. Модули ядра ---"
+if lsmod | grep -q ip_set_hash_net; then
+    echo "  [OK] ip_set_hash_net загружен"
+else
+    echo "  [FAIL] ip_set_hash_net НЕ загружен"
+    ERRORS=$((ERRORS+1))
+fi
+
+if lsmod | grep -q ip6_set_hash_net; then
+    echo "  [OK] ip6_set_hash_net загружен"
+else
+    echo "  [WARN] ip6_set_hash_net НЕ загружен (IPv6 не будет работать)"
+    RECOMMENDATIONS="${RECOMMENDATIONS}
+  - IPv6: Убедитесь, что провайдер поддерживает IPv6. В веб-интерфейсе роутера (WAN → Протокол IPv6) установите 'Тип подключения' = 'Native DHCPv6'. В разделе 'Настройки IPv6 для LAN' включите 'Получать IPv6-адрес LAN через DHCPv6 IA-PD'. Если провайдер не поддерживает IPv6, предупреждение можно игнорировать."
+    WARNINGS=$((WARNINGS+1))
+fi
+if lsmod | grep -q xt_set; then
+    echo "  [OK] xt_set загружен"
+else
+    echo "  [WARN] xt_set НЕ загружен"
+    WARNINGS=$((WARNINGS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# 2. VPN-туннель
+# -----------------------------------------------------------------------------
+echo "--- 2. Состояние VPN-туннеля (wg0) ---"
+if ip link show wg0 >/dev/null 2>&1; then
+    echo "  [OK] Интерфейс wg0 существует"
+    STATE=$(ip link show wg0 | grep -oE 'state [A-Z]+' | awk '{print $2}')
+    echo "  [OK] Состояние: $STATE"
+    IP=$(ip -4 addr show wg0 | grep -oE 'inet [0-9.]+' | awk '{print $2}')
+    [ -n "$IP" ] && echo "  [OK] IPv4 адрес: $IP" || { echo "  [FAIL] IPv4 адрес отсутствует"; ERRORS=$((ERRORS+1)); }
+    if curl --interface wg0 --max-time 5 -s -o /dev/null -w "%{http_code}" http://cp.cloudflare.com | grep -qE "200|204|301|302"; then
+        echo "  [OK] Трафик через туннель проходит"
+    else
+        echo "  [WARN] Трафик через туннель не проходит"
+        WARNINGS=$((WARNINGS+1))
+    fi
+else
+    echo "  [FAIL] Интерфейс wg0 НЕ НАЙДЕН"
+    ERRORS=$((ERRORS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# 3. ipset (IPv4 и IPv6)
+# -----------------------------------------------------------------------------
+echo "--- 3. Состояние ipset ---"
+if ipset list bypass_nets >/dev/null 2>&1; then
+    ENTRIES=$(ipset list bypass_nets | grep -oE 'Number of entries: [0-9]+' | awk '{print $4}')
+    echo "  [OK] ipset bypass_nets существует (записей: $ENTRIES)"
+    if [ "$ENTRIES" -lt 1000 ]; then
+        echo "  [WARN] Подозрительно мало записей, возможно, требуется обновление"
+        WARNINGS=$((WARNINGS+1))
+    fi
+else
+    echo "  [FAIL] ipset bypass_nets НЕ СУЩЕСТВУЕТ"
+    ERRORS=$((ERRORS+1))
+fi
+
+if ipset list bypass_nets6 >/dev/null 2>&1; then
+    ENTRIES6=$(ipset list bypass_nets6 | grep -oE 'Number of entries: [0-9]+' | awk '{print $4}')
+    echo "  [OK] ipset bypass_nets6 существует (записей: $ENTRIES6)"
+    if [ "$ENTRIES6" -lt 10 ]; then
+        echo "  [WARN] Слишком мало IPv6 подсетей, возможно, не обновлялся"
+        WARNINGS=$((WARNINGS+1))
+    fi
+else
+    echo "  [FAIL] ipset bypass_nets6 НЕ СУЩЕСТВУЕТ"
+    ERRORS=$((ERRORS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# 4. Правила iptables (IPv4 и IPv6)
+# -----------------------------------------------------------------------------
+echo "--- 4. Правила iptables (mangle PREROUTING) ---"
+if iptables -t mangle -C PREROUTING -m set --match-set bypass_nets dst -j MARK --set-mark 0xca6c 2>/dev/null; then
+    echo "  [OK] Правило MARK (IPv4) присутствует"
+else
+    echo "  [FAIL] Правило MARK (IPv4) ОТСУТСТВУЕТ"
+    ERRORS=$((ERRORS+1))
+fi
+if iptables -t mangle -C PREROUTING -m set --match-set bypass_nets dst -j CONNMARK --set-mark 0xca6c 2>/dev/null; then
+    echo "  [OK] Правило CONNMARK save (IPv4) присутствует"
+else
+    echo "  [WARN] Правило CONNMARK save (IPv4) отсутствует"
+    WARNINGS=$((WARNINGS+1))
+fi
+if iptables -t mangle -C PREROUTING ! -i wg0 -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
+    echo "  [OK] Правило CONNMARK restore (IPv4) присутствует"
+else
+    # fallback: проверяем без ! -i wg0 (старая версия)
+    if iptables -t mangle -C PREROUTING -m connmark --mark 0xca6c -j CONNMARK --restore-mark 2>/dev/null; then
+        echo "  [OK] Правило CONNMARK restore (IPv4) присутствует"
+    else
+        echo "  [WARN] Правило CONNMARK restore (IPv4) отсутствует"
+        WARNINGS=$((WARNINGS+1))
+    fi
+fi
+
+if ip6tables -t mangle -C PREROUTING -m set --match-set bypass_nets6 dst -j MARK --set-mark 0xca6c 2>/dev/null; then
+    echo "  [OK] Правило MARK (IPv6) присутствует"
+else
+    echo "  [WARN] Правило MARK (IPv6) отсутствует"
+    WARNINGS=$((WARNINGS+1))
+fi
+if ip6tables -t mangle -C PREROUTING -m set --match-set bypass_nets6 dst -j CONNMARK --set-mark 0xca6c 2>/dev/null; then
+    echo "  [OK] Правило CONNMARK save (IPv6) присутствует"
+else
+    echo "  [WARN] Правило CONNMARK save (IPv6) отсутствует"
+    WARNINGS=$((WARNINGS+1))
+fi
+
+# --- Проверка dnsmasq-ipset (v3.13: доменный список → bypass_nets) ---
+if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null; then
+    if pidof dnsmasq >/dev/null 2>&1; then
+        # v3.15.1: проверяем ЭФФЕКТ (резолв → ipset), а не только наличие строки
+        # busybox nslookup печатает 'Address: 1.2.3.4' = 2 поля — берём $2.
+        # Перебираем до 5 доменов: первый в списке может быть не-FQDN ('.ua').
+        _check=0
+        _doms=$(sed -n '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</p' \
+                /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
+                | grep '^ipset=/' | sed 's|^ipset=/||; s|/[^/]*$||' | tr '/' '\n' \
+                | grep -E '^[a-z0-9]([a-z0-9.-]*[a-z0-9])$' | head -5)
+        for _d in $_doms; do
+            _ips=$(nslookup "$_d" 127.0.0.1 2>/dev/null \
+                   | awk -F': ' '/^Address/ { split($2,a," "); if (a[1] ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && a[1] != "127.0.0.1") print a[1] }')
+            [ -n "$_ips" ] || continue
+            _ip=$(echo "$_ips" | head -1)
+            if ipset test bypass_nets "$_ip" 2>&1 | grep -q 'is in set'; then
+                echo "  [OK] dnsmasq-ipset РАБОТАЕТ ($_d → $_ip в bypass_nets)"
+                _check=2
+                break
+            fi
+            echo "  [FAIL] dnsmasq-ipset не применяется: $_d резолвится в $_ip, но его нет в bypass_nets"
+            ERRORS=$((ERRORS+1))
+            _check=2
+            break
+        done
+        if [ "$_check" = "0" ]; then
+            echo "  [WARN] dnsmasq-ipset: проверить не удалось (домены не резолвятся) — не ошибка"
+            WARNINGS=$((WARNINGS+1))
+        fi
+    else
+        echo "  [WARN] dnsmasq-ipset блок есть, dnsmasq не запущен"
+        WARNINGS=$((WARNINGS+1))
+    fi
+else
+    echo "  [FAIL] dnsmasq-ipset блок не найден (домены → bypass_nets)"
+    ERRORS=$((ERRORS+1))
+fi
+
+# --- Проверка blocked-only автообучения (v3.15) ---
+if iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'PWB_PROBE'; then
+    echo "  [OK] LOG-правила PWB_PROBE (blocked-only) присутствуют"
+else
+    echo "  [WARN] LOG-правила PWB_PROBE отсутствуют (автообучение неактивно)"
+    WARNINGS=$((WARNINGS+1))
+fi
+if [ -f /etc/storage/blocked_ips.cache ]; then
+    BLC=$(wc -l < /etc/storage/blocked_ips.cache 2>/dev/null)
+    echo "  [OK] blocked_ips.cache: ${BLC} выученных (blocked-only)"
+else
+    echo "  [WARN] blocked_ips.cache отсутствует (ещё не обучались)"
+    WARNINGS=$((WARNINGS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# 5. Policy routing (IPv4 и IPv6)
+# -----------------------------------------------------------------------------
+echo "--- 5. Policy routing ---"
+RULE=$(ip rule show | grep 5182)
+if echo "$RULE" | grep -q "fwmark 0xca6c lookup 51" && ! echo "$RULE" | grep -q "not"; then
+    echo "  [OK] Правило ip rule (IPv4) корректно"
+else
+    echo "  [FAIL] Правило ip rule (IPv4) НЕКОРРЕКТНО: $RULE"
+    ERRORS=$((ERRORS+1))
+fi
+if ip route show table 51 | grep -q "default dev wg0"; then
+    echo "  [OK] Маршрут в таблице 51 (IPv4): default dev wg0"
+else
+    echo "  [FAIL] Маршрут в таблице 51 (IPv4) ОТСУТСТВУЕТ"
+    ERRORS=$((ERRORS+1))
+fi
+
+if ip -6 rule show | grep -q "5182.*fwmark 0xca6c lookup 51"; then
+    echo "  [OK] Правило ip -6 rule (IPv6) присутствует"
+else
+    echo "  [WARN] Правило ip -6 rule (IPv6) отсутствует"
+    WARNINGS=$((WARNINGS+1))
+fi
+if ip -6 route show table 51 | grep -q "default dev wg0"; then
+    echo "  [OK] Маршрут в таблице 51 (IPv6): default dev wg0"
+else
+    echo "  [WARN] Маршрут в таблице 51 (IPv6) отсутствует"
+    WARNINGS=$((WARNINGS+1))
+fi
+
+if [ "$(sysctl -n net.ipv4.conf.wg0.rp_filter 2>/dev/null)" = "0" ]; then
+    echo "  [OK] rp_filter для wg0 = 0"
+else
+    echo "  [WARN] rp_filter для wg0 != 0"
+    WARNINGS=$((WARNINGS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# 6. Watchdog
+# -----------------------------------------------------------------------------
+echo "--- 6. Watchdog ---"
+if ps | grep -q '[r]oute_watchdog'; then
+    echo "  [OK] Процесс watchdog запущен"
+else
+    echo "  [FAIL] Процесс watchdog НЕ ЗАПУЩЕН"
+    ERRORS=$((ERRORS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# 7. Лог основного скрипта
+# -----------------------------------------------------------------------------
+echo "--- 7. Лог основного скрипта (ipset_update.sh) ---"
+if [ -f /tmp/ipset_update.log ]; then
+    LAST_END=$(grep "=== КОНЕЦ ===" /tmp/ipset_update.log | tail -1)
+    if [ -n "$LAST_END" ]; then
+        echo "  [OK] Последний запуск успешен"
+    else
+        echo "  [WARN] Нет подтверждения успешного завершения"
+        WARNINGS=$((WARNINGS+1))
+    fi
+else
+    echo "  [WARN] Лог отсутствует"
+    WARNINGS=$((WARNINGS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# 8. Автозагрузка
+# -----------------------------------------------------------------------------
+echo "--- 8. Автозагрузка ---"
+if grep -q "ipset_update.sh" /etc/storage/started_script.sh; then
+    echo "  [OK] ipset_update.sh прописан в started_script.sh"
+else
+    echo "  [FAIL] ipset_update.sh НЕ ПРОПИСАН"
+    ERRORS=$((ERRORS+1))
+fi
+if grep -q "ip_set_hash_net" /etc/storage/started_script.sh; then
+    echo "  [OK] Модуль ip_set_hash_net загружается при старте"
+else
+    echo "  [WARN] Модуль ip_set_hash_net НЕ загружается при старте"
+    WARNINGS=$((WARNINGS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# 9. Источники CIDR (доменный список → bypass_nets)
+# -----------------------------------------------------------------------------
+echo "--- 9. Источники CIDR ---"
+if [ -f /etc/storage/bypass_nets.cidr ]; then
+    CIDRS=$(wc -l < /etc/storage/bypass_nets.cidr 2>/dev/null)
+    echo "  [OK] bypass_nets.cidr: ${CIDRS} подсетей"
+    if [ "${CIDRS:-0}" -lt 100 ]; then
+        echo "  [WARN] Подозрительно мало подсетей в bypass_nets.cidr"
+        WARNINGS=$((WARNINGS+1))
+    fi
+else
+    echo "  [WARN] bypass_nets.cidr отсутствует (обновление ещё не выполнялось?)"
+    WARNINGS=$((WARNINGS+1))
+fi
+if [ -f /etc/storage/bypass_nets6.cidr ]; then
+    CIDRS6=$(wc -l < /etc/storage/bypass_nets6.cidr 2>/dev/null)
+    echo "  [OK] bypass_nets6.cidr: ${CIDRS6} подсетей"
+else
+    echo "  [WARN] bypass_nets6.cidr отсутствует (IPv6-список не создан)"
+    WARNINGS=$((WARNINGS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# 10. Планировщик (cron)
+# -----------------------------------------------------------------------------
+echo "--- 10. Планировщик (cron) ---"
+CRON_FILE="/etc/storage/cron/crontabs/admin"
+if [ -f "$CRON_FILE" ]; then
+    if grep -q 'ipset_update.sh' "$CRON_FILE" 2>/dev/null; then
+        echo "  [OK] ipset_update.sh в cron присутствует"
+    else
+        echo "  [WARN] ipset_update.sh в cron отсутствует"
+        WARNINGS=$((WARNINGS+1))
+    fi
+    if grep -q 'route_watchdog.sh' "$CRON_FILE" 2>/dev/null; then
+        echo "  [OK] route_watchdog.sh в cron присутствует"
+    else
+        echo "  [WARN] route_watchdog.sh в cron отсутствует"
+        WARNINGS=$((WARNINGS+1))
+    fi
+else
+    echo "  [WARN] crontab admin отсутствует"
+    WARNINGS=$((WARNINGS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# Итоги
+# -----------------------------------------------------------------------------
+echo ""
+echo "=============================================="
+echo "                 ИТОГИ ДИАГНОСТИКИ"
+echo "=============================================="
+echo ""
+echo "  Ошибок:    $ERRORS"
+echo "  Предупреждений: $WARNINGS"
+echo ""
+
+if [ $ERRORS -eq 0 ] && [ $WARNINGS -eq 0 ]; then
+    echo "  Система полностью исправна!"
+elif [ $ERRORS -eq 0 ]; then
+    echo "  Система работает, но есть незначительные предупреждения."
+else
+    echo "  Обнаружены критические ошибки!"
+fi
+
+if [ -n "$RECOMMENDATIONS" ]; then
+    echo ""
+    echo "  Рекомендации:"
+    echo "$RECOMMENDATIONS"
+fi
+
+echo ""
+echo "=============================================="
+echo "Диагностика завершена."
+EOF_DIAG
+chmod +x /etc/storage/diagnostic.sh
+
+# -----------------------------------------------------------------------------
 # 3. Настройка автозагрузки
 # -----------------------------------------------------------------------------
 cat > /etc/storage/started_script.sh << 'EOF_STARTED'
@@ -879,7 +1230,7 @@ mtd_storage.sh save
 
 echo ""
 echo "=============================================="
-echo "Установка v3.15.1-beta завершена. Запускаю первый импорт..."
+echo "Установка v3.15.2-beta завершена. Запускаю первый импорт..."
 echo "=============================================="
 
 # Устраняем возможный СТАРЫЙ инстанс watchdog/ipset_update.

@@ -24,7 +24,7 @@ syntax:
 embedded:
 	@echo "=== [2/5] embedded heredocs ==="
 	@fail=0; \
-	for pair in "rollback.sh:EOF_ROLLBACK" "selftest.sh:EOF_SELFTEST" "ipset_update.sh:EOF_SCRIPT" "route_watchdog.sh:EOF_WATCHDOG" "started_script.sh:EOF_STARTED"; do \
+	for pair in "rollback.sh:EOF_ROLLBACK" "selftest.sh:EOF_SELFTEST" "ipset_update.sh:EOF_SCRIPT" "route_watchdog.sh:EOF_WATCHDOG" "started_script.sh:EOF_STARTED" "diagnostic.sh:EOF_DIAG"; do \
 	    n=$${pair%%:*}; e=$${pair##*:}; \
 	    awk "/^cat > \/etc\/storage\/$$n/{f=1;next} /^$$e/{f=0} f" install.sh > /tmp/_mk_$$n 2>/dev/null; \
 	    if [ -s /tmp/_mk_$$n ]; then \
