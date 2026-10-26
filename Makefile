@@ -50,6 +50,8 @@ ipv6:
 	@echo "  [OK] наборы создаются до рестарта"
 	@if grep -q 'можно игнорировать' install.sh diagnostic.sh 2>/dev/null; then echo "  [FAIL] остался текст 'можно игнорировать'"; exit 1; fi
 	@echo "  [OK] ложного совета нет"
+	@sh ./scripts/check-heredoc-vars.sh || exit 1
+	@echo "  [OK] переменные определены внутри встроенных копий"
 
 version-sync:
 	@echo "=== [4/5] version consistency ==="
