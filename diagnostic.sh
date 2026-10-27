@@ -1,16 +1,18 @@
 #!/bin/sh
 # =============================================================================
 #  diagnostic.sh — расширенная диагностика системы селективной маршрутизации
-#  Версия 3.13.0 (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
+#  Версия 3.16.3 (Padavan / BusyBox). Возвращает 0 при отсутствии ошибок.
 #  Использование:  sh /etc/storage/diagnostic.sh   (или curl ... | sh)
 # =============================================================================
 
 echo ""
 echo "=============================================="
-echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.13.0"
+echo "  ДИАГНОСТИКА СИСТЕМЫ СЕЛЕКТИВНОЙ МАРШРУТИЗАЦИИ v3.16.3"
 echo "=============================================="
 echo ""
 
+IPSET_NAME="bypass_nets"
+IPSET6_NAME="bypass_nets6"
 ERRORS=0
 WARNINGS=0
 RECOMMENDATIONS=""
@@ -26,13 +28,15 @@ else
     ERRORS=$((ERRORS+1))
 fi
 
-if lsmod | grep -q ip6_set_hash_net; then
-    echo "  [OK] ip6_set_hash_net загружен"
+# v3.15.3: модуля ip6_set_hash_net не существует — IPv6-наборы обслуживает
+# ip_set_hash_net (семейство задаётся при создании набора: family inet6).
+# Проверяем не имя модуля, а фактическую способность создать IPv6-набор.
+if ipset list "$IPSET6_NAME" >/dev/null 2>&1; then
+    _v6n=$(ipset list "$IPSET6_NAME" 2>/dev/null | grep -oE 'Number of entries: [0-9]+' | awk '{print $4}')
+    echo "  [OK] IPv6-набор $IPSET6_NAME работает (записей: ${_v6n:-0})"
 else
-    echo "  [WARN] ip6_set_hash_net НЕ загружен (IPv6 не будет работать)"
-    RECOMMENDATIONS="${RECOMMENDATIONS}
-  - IPv6: Убедитесь, что провайдер поддерживает IPv6. В веб-интерфейсе роутера (WAN → Протокол IPv6) установите 'Тип подключения' = 'Native DHCPv6'. В разделе 'Настройки IPv6 для LAN' включите 'Получать IPv6-адрес LAN через DHCPv6 IA-PD'. Если провайдер не поддерживает IPv6, предупреждение можно игнорировать."
-    WARNINGS=$((WARNINGS+1))
+    echo "  [FAIL] IPv6-набор $IPSET6_NAME отсутствует — IPv6-адреса не пойдут в туннель"
+    ERRORS=$((ERRORS+1))
 fi
 if lsmod | grep -q xt_set; then
     echo "  [OK] xt_set загружен"
@@ -132,10 +136,35 @@ else
 fi
 
 # --- Проверка dnsmasq-ipset (v3.13: доменный список → bypass_nets) ---
-if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
-   || grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq.conf 2>/dev/null; then
+if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null; then
     if pidof dnsmasq >/dev/null 2>&1; then
-        echo "  [OK] dnsmasq-ipset блок настроен, dnsmasq запущен"
+        # v3.15.1: проверяем ЭФФЕКТ (резолв → ipset), а не только наличие строки
+        # busybox nslookup печатает 'Address: 1.2.3.4' = 2 поля — берём $2.
+        # Перебираем до 5 доменов: первый в списке может быть не-FQDN ('.ua').
+        _check=0
+        _doms=$(sed -n '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</p' \
+                /etc/storage/dnsmasq/dnsmasq.conf 2>/dev/null \
+                | grep '^ipset=/' | sed 's|^ipset=/||; s|/[^/]*$||' | tr '/' '\n' \
+                | grep -E '^[a-z0-9]([a-z0-9.-]*[a-z0-9])$' | head -5)
+        for _d in $_doms; do
+            _ips=$(nslookup "$_d" 127.0.0.1 2>/dev/null \
+                   | awk -F': ' '/^Address/ { split($2,a," "); if (a[1] ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && a[1] != "127.0.0.1") print a[1] }')
+            [ -n "$_ips" ] || continue
+            _ip=$(echo "$_ips" | head -1)
+            if ipset test bypass_nets "$_ip" 2>&1 | grep -q 'is in set'; then
+                echo "  [OK] dnsmasq-ipset РАБОТАЕТ ($_d → $_ip в bypass_nets)"
+                _check=2
+                break
+            fi
+            echo "  [FAIL] dnsmasq-ipset не применяется: $_d резолвится в $_ip, но его нет в bypass_nets"
+            ERRORS=$((ERRORS+1))
+            _check=2
+            break
+        done
+        if [ "$_check" = "0" ]; then
+            echo "  [WARN] dnsmasq-ipset: проверить не удалось (домены не резолвятся) — не ошибка"
+            WARNINGS=$((WARNINGS+1))
+        fi
     else
         echo "  [WARN] dnsmasq-ipset блок есть, dnsmasq не запущен"
         WARNINGS=$((WARNINGS+1))
@@ -143,6 +172,21 @@ if grep -q '# >>> PWB dnsmasq ipset >>>' /etc/storage/dnsmasq/dnsmasq.conf 2>/de
 else
     echo "  [FAIL] dnsmasq-ipset блок не найден (домены → bypass_nets)"
     ERRORS=$((ERRORS+1))
+fi
+
+# --- Проверка blocked-only автообучения (v3.15) ---
+if iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'PWB_PROBE'; then
+    echo "  [OK] LOG-правила PWB_PROBE (blocked-only) присутствуют"
+else
+    echo "  [WARN] LOG-правила PWB_PROBE отсутствуют (автообучение неактивно)"
+    WARNINGS=$((WARNINGS+1))
+fi
+if [ -f /etc/storage/blocked_ips.cache ]; then
+    BLC=$(wc -l < /etc/storage/blocked_ips.cache 2>/dev/null)
+    echo "  [OK] blocked_ips.cache: ${BLC} выученных (blocked-only)"
+else
+    echo "  [WARN] blocked_ips.cache отсутствует (ещё не обучались)"
+    WARNINGS=$((WARNINGS+1))
 fi
 
 # -----------------------------------------------------------------------------
@@ -271,6 +315,43 @@ if [ -f "$CRON_FILE" ]; then
     fi
 else
     echo "  [WARN] crontab admin отсутствует"
+    WARNINGS=$((WARNINGS+1))
+fi
+
+# -----------------------------------------------------------------------------
+# 11. Менеджер доменов и веб-страница (v3.16)
+# -----------------------------------------------------------------------------
+echo "--- 11. Домены пользователя и страница ---"
+if [ -x /etc/storage/bypass_domains.sh ]; then
+    echo "  [OK] bypass_domains.sh на месте"
+    _dc=$(grep -vcE '^[[:space:]]*(#|$)' /etc/storage/bypass_domains.lst 2>/dev/null)
+    [ -z "$_dc" ] && _dc=0
+    echo "  [OK] личных доменов в списке: $_dc"
+else
+    echo "  [WARN] bypass_domains.sh отсутствует"
+    WARNINGS=$((WARNINGS+1))
+fi
+if [ -f /etc/storage/pwb-web/bypass.html ]; then
+    echo "  [OK] страница: мастер-копия на месте"
+else
+    echo "  [WARN] страница не установлена"
+    WARNINGS=$((WARNINGS+1))
+fi
+if grep -q ' /opt ' /proc/mounts 2>/dev/null; then
+    if [ -f /opt/share/www/custom/index.html ]; then
+        echo "  [OK] страница развёрнута: http://<router>/custom/index.html"
+    else
+        echo "  [WARN] /opt смонтирован, но страница не развёрнута"
+        WARNINGS=$((WARNINGS+1))
+    fi
+else
+    echo "  [WARN] /opt не смонтирован — слот /custom недоступен"
+    WARNINGS=$((WARNINGS+1))
+fi
+if grep -qF '# >>> PWB web stage >>>' /etc/storage/started_script.sh 2>/dev/null; then
+    echo "  [OK] boot-хук страницы прописан"
+else
+    echo "  [WARN] boot-хук страницы отсутствует — после reboot слот опустеет"
     WARNINGS=$((WARNINGS+1))
 fi
 

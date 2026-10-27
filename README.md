@@ -1,6 +1,6 @@
 # 🚀 Селективная маршрутизация через AmneziaWG + WARP на Padavan
 
-![Версия](https://img.shields.io/badge/version-3.13.0-blue)
+![Версия](https://img.shields.io/badge/version-3.16.3-blue)
 ![Платформа](https://img.shields.io/badge/platform-Padavan-orange)
 ![Лицензия](https://img.shields.io/badge/license-MIT-green)
 
@@ -18,7 +18,7 @@
 **Авторы не одобряют и не поощряют использование данного скрипта для
 нарушения законодательства Российской Федерации или любой другой страны.**
 
-## 📌 Что делает система (v3.13)
+## 📌 Что делает система (v3.16)
 
 - Использует **готовые, ежедневно обновляемые CIDR-списки** (подсети) от
   13+ источников (IPv4) и 4 источников (IPv6).
@@ -32,6 +32,9 @@
   Пополнение `bypass_nets` — через **dnsmasq-ipset** (v3.13+): IP доменов из
   доменного списка попадают в сет автоматически при DNS-резолве (нагрузка на
   роутер ~0).
+- **blocked-only автообучение** (v3.15): неизвестные адреса попадают в WARP
+  **только если прямое соединение недоступно** — доступные сайты остаются DIRECT
+  (без регресса learn-everything).
 - **Полная автоматизация**: установка одной командой, обновление списков
   каждые 6 часов.
 
@@ -49,7 +52,7 @@
 команду:
 
 ```sh
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.13.0/hardware_check.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.16.3/hardware_check.sh | sh
 ```
 
 ## 📥 Установка (одной командой)
@@ -58,10 +61,10 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.13.0
 > зафиксированную, проверенную версию, которую нельзя изменить посторонним
 > коммитом.
 
-Текущая версия — **v3.13.0**:
+Текущая версия — **v3.16.3**:
 
 ```sh
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.13.0/install.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.16.3/install.sh | sh
 ```
 
 После завершения (2–3 минуты) роутер можно перезагрузить: `reboot`.
@@ -71,7 +74,7 @@ curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.13.0
 Полная диагностика (рекомендуется):
 
 ```sh
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.13.0/diagnostic.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.16.3/diagnostic.sh | sh
 ```
 
 > 💡 В **v3.12+** для быстрой проверки есть `selftest.sh`. Он устанавливается в
@@ -101,50 +104,48 @@ dnsmasq: при DNS-резолве добавляет IP доменов из д�
 
 Cron: каждые 6 часов полное обновление CIDR-списков и доменного списка.
 
-## ⚠️ Известные ограничения
+## 🌐 Добавление своих доменов через веб-страницу
 
-Некоторые сервисы могут работать нестабильно через туннель или требовать
-дополнительной настройки. Часть ресурсов может быть недоступна через WARP
-независимо от настроек.
+Встроенный список покрывает популярные сервисы. Если нужного сайта в нём нет —
+добавьте его сами, прямо в браузере, без SSH.
 
-## 🔧 Ручное добавление/удаление источников CIDR
+После установки откройте:
 
-Для IPv4
-
-Добавить новый источник:
-
-```sh
-sed -i '/^CIDR_SOURCES="/a https://example.com/new_ipv4_list.txt' /etc/storage/ipset_update.sh
-sh /etc/storage/ipset_update.sh
+```
+http://192.168.1.1/custom/index.html
 ```
 
-Удалить источник:
+(подставьте адрес своего роутера; вход — тот же, что в веб-интерфейс)
+
+На странице:
+
+| Действие | Что происходит |
+|---|---|
+| Ввести домен → «Добавить» | домен уходит в туннель; через 10–20 секунд сайт открывается |
+| «Удалить» рядом с доменом | сайт снова идёт напрямую |
+| «Применить заново» | пересобрать конфиг (обычно не нужно) |
+
+Работает и для IPv4, и для IPv6. Список сохраняется и переживает перезагрузку.
+
+**Список хранится** в `/etc/storage/bypass_domains.lst` — можно посмотреть и
+поправить по SSH, если удобнее:
 
 ```sh
-sed -i '\|https://example.com/old_ipv4_list.txt|d' /etc/storage/ipset_update.sh
-sh /etc/storage/ipset_update.sh
+sh /etc/storage/bypass_domains.sh list
+sh /etc/storage/bypass_domains.sh add example.com
+sh /etc/storage/bypass_domains.sh del example.com
+sh /etc/storage/bypass_domains.sh status
 ```
 
-Для IPv6
-
-Добавить новый источник:
-
-```sh
-sed -i '/^CIDR6_SOURCES="/a https://example.com/new_ipv6_list.txt' /etc/storage/ipset_update.sh
-sh /etc/storage/ipset_update.sh
-```
-
-Удалить источник:
-
-```sh
-sed -i '\|https://example.com/old_ipv6_list.txt|d' /etc/storage/ipset_update.sh
-sh /etc/storage/ipset_update.sh
-```
+> Страница живёт в штатном слоте прошивки `/www/custom`. Если после перезагрузки
+> она не открывается — проверьте `sh /etc/storage/pwb_web_setup.sh status`:
+> слот разворачивается при загрузке автоматически, но если boot-хук не сработал,
+> достаточно выполнить `sh /etc/storage/pwb_web_setup.sh stage`.
 
 ## 🗑 Удаление
 
 ```sh
-curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.13.0/uninstall.sh | sh
+curl -sL https://raw.githubusercontent.com/kronggg/padavan-split-routing/v3.16.3/uninstall.sh | sh
 ```
 
 После выполнения роутер автоматически перезагрузится и вернётся к стандартной

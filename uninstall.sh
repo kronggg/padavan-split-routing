@@ -16,10 +16,31 @@ rm -f /etc/storage/route_watchdog.sh
 rm -f /etc/storage/diagnostic.sh
 rm -f /etc/storage/started_script.sh
 
+# v3.16: менеджер доменов и веб-страница
+[ -x /etc/storage/pwb_web_setup.sh ] && /etc/storage/pwb_web_setup.sh unstage >/dev/null 2>&1
+rm -f /etc/storage/bypass_domains.sh
+rm -f /etc/storage/pwb_web_setup.sh
+rm -f /etc/storage/bypass_domains.lst
+find /etc/storage/pwb-web -depth -delete 2>/dev/null
+# снимаем блок доменов из dnsmasq и применяем (полный рестарт, не HUP)
+DCONF="/etc/storage/dnsmasq/dnsmasq.conf"
+if [ -f "$DCONF" ]; then
+    sed -i '\|^# >>> PWB bypass domains >>>$|,\|^# <<< PWB bypass domains <<<$|d' "$DCONF" 2>/dev/null
+    if pidof dnsmasq >/dev/null 2>&1; then
+        killall dnsmasq 2>/dev/null
+        _i=0
+        while [ -n "$(pidof dnsmasq 2>/dev/null)" ] && [ "$_i" -lt 10 ]; do
+            sleep 1; _i=$((_i + 1))
+        done
+        dnsmasq 2>/dev/null
+    fi
+fi
+
 # Удаляем CIDR-файлы и кэши
 rm -f /etc/storage/bypass_nets.cidr
 rm -f /etc/storage/bypass_nets6.cidr
 rm -f /etc/storage/learned_ips.cache
+rm -f /etc/storage/blocked_ips.cache
 rm -f /etc/storage/bypass_nets.dump
 rm -f /tmp/ipset_update.lock
 rm -f /tmp/route_watchdog.lock
@@ -48,13 +69,25 @@ ip6tables -t mangle -D PREROUTING -m set --match-set bypass_nets6 dst -j CONNMAR
 # Удаляем LOG-правила автообучения (Фаза 4)
 iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p tcp -m multiport --dports 80,443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
 iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p udp --dport 443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_LEARN " 2>/dev/null
+# v3.15: снимаем LOG-правила blocked-only автообучения (PWB_PROBE)
+iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p tcp -m multiport --dports 80,443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_PROBE " 2>/dev/null
+iptables -t mangle -D PREROUTING -m set ! --match-set bypass_nets dst -p udp --dport 443 -m limit --limit 30/min --limit-burst 60 -j LOG --log-prefix "PWB_PROBE " 2>/dev/null
 
 # Удаляем блок dnsmasq селективности (v3.13)
+# v3.15.1: только канонический путь (корневой dnsmasq не читает)
 DCONF="/etc/storage/dnsmasq/dnsmasq.conf"
-[ -f "$DCONF" ] || DCONF="/etc/storage/dnsmasq.conf"
 if [ -f "$DCONF" ]; then
     sed -i '/# >>> PWB dnsmasq ipset >>>/,/# <<< PWB dnsmasq ipset <<</d' "$DCONF" 2>/dev/null
-    pidof dnsmasq >/dev/null 2>&1 && killall -HUP dnsmasq 2>/dev/null
+    # v3.15.1: SIGHUP не применяет конфиг — нужен полный рестарт
+    if pidof dnsmasq >/dev/null 2>&1; then
+        killall dnsmasq 2>/dev/null
+        _i=0
+        while [ -n "$(pidof dnsmasq 2>/dev/null)" ] && [ "$_i" -lt 10 ]; do
+            sleep 1; _i=$((_i + 1))
+        done
+        dnsmasq 2>/dev/null
+        sleep 2
+    fi
 fi
 
 # Удаляем policy routing (IPv4 и IPv6)
