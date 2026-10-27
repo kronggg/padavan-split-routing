@@ -55,17 +55,23 @@ ipv6:
 
 webstage:
 	@echo "=== regression: web page staged at install time ==="
-	@grep -q 'pwb_web_setup.sh stage' install.sh || { echo "  [FAIL] install.sh не вызывает stage — страница останется пустой"; exit 1; }
-	@echo "  [OK] stage вызывается при установке"
+	@grep -q 'pwb_web_setup.sh ensure' install.sh || { echo "  [FAIL] install.sh не вызывает ensure — страница может остаться пустой"; exit 1; }
+	@echo "  [OK] ensure вызывается при установке"
 	@if [ -f pwb_web_setup.sh ]; then \
 	    a=$$(grep -n 'chmod +x /etc/storage/started_script.sh' install.sh | cut -d: -f1); \
-	    b=$$(grep -n '^    /etc/storage/pwb_web_setup.sh stage' install.sh | cut -d: -f1); \
+	    b=$$(grep -n 'pwb_web_setup.sh ensure' install.sh | head -1 | cut -d: -f1); \
 	    if [ -z "$$a" ] || [ -z "$$b" ]; then echo "  [FAIL] не найдены якоря порядка"; exit 1; fi; \
-	    if [ "$$b" -lt "$$a" ]; then echo "  [FAIL] stage вызывается ДО создания started_script.sh (boot-хук некуда писать)"; exit 1; fi; \
-	    echo "  [OK] порядок верный: stage после started_script ($$b > $$a)"; \
+	    if [ "$$b" -lt "$$a" ]; then echo "  [FAIL] ensure вызывается ДО создания started_script.sh (boot-хук некуда писать)"; exit 1; fi; \
+	    echo "  [OK] порядок верный: ensure после started_script ($$b > $$a)"; \
 	fi
-	@grep -q "grep -q ' /opt ' /proc/mounts" install.sh || { echo "  [FAIL] нет проверки монтирования /opt"; exit 1; }
-	@echo "  [OK] проверка монтирования /opt присутствует"
+	@grep -q "финальная проверка слота" install.sh || { echo "  [FAIL] нет финальной проверки слота после mtd_storage.sh save"; exit 1; }
+	@echo "  [OK] финальная проверка слота присутствует"
+	@grep -q 'mount_opt' pwb_web_setup.sh || { echo "  [FAIL] нет mount_opt с повтором"; exit 1; }
+	@echo "  [OK] mount с повтором присутствует"
+	@if grep -q 'mount -t tmpfs -o size=8m tmpfs /opt 2>/dev/null$$' pwb_web_setup.sh; then \
+	    echo "  [FAIL] ошибки mount всё ещё глушатся без диагностики"; exit 1; \
+	fi
+	@echo "  [OK] ошибки mount не глушатся"
 
 sync:
 	@echo "=== regression: heredoc copies match standalone files ==="
